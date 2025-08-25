@@ -1,0 +1,19 @@
+# Sensor Configuration
+
+# DIO Device Settings
+dio:
+  device_name: "DIO001"  # Default device name for Ethernet connection
+  simulation_mode: false  # Set to true for simulation, false for real hardware
+  bit_a: 0  # Sensor A connected to bit 0
+  bit_b: 1  # Sensor B connected to bit 1
+
+# Buffer Settings
+buffer:
+  duration_seconds: 30  # How many seconds of images to buffer
+  fps: 10  # Frames per second to capture
+  
+# Save Settings
+save:
+  base_directory: "data/images/inspection"  # Base directory for saved images
+  format: "jpg"  # Image format (jpg, png, bmp)
+  quality: 95  # JPEG quality (0-100) 

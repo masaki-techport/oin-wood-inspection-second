@@ -1,0 +1,8 @@
+# 露光時間[μs]
+ExposureTime: 1000
+# 撮影スパン[ms]
+IntervalTime: 0.2
+# 保存ディレクトリ
+SaveDirectory: 'data'
+# データ保存用HDDのパス
+HDDPath: 'D:\OiN\data'

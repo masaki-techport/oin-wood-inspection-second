@@ -1,0 +1,18 @@
+# Configuration for wood inspection parameters
+# Values used in the inspection UI and analysis
+
+# Default measurement value (millimeters)
+default_measurement: 0
+
+# Measurement values for different defect types
+measurements:
+  no_defect: 10      # 無欠点 (No defect)
+  small_knot: 20     # こぶし (Small knot)
+  large_knot: 30     # 節あり (Large knot)
+
+# UI display settings
+ui:
+  # Text box styling
+  textbox:
+    default_color: "lightgray"  # Color when no analysis result
+    active_color: "white"       # Color after analysis result

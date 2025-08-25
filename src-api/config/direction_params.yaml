@@ -1,0 +1,11 @@
+# Direction Camera Configuration
+# バッファに保存する最大秒数
+MaxSeconds: 60
+# 露光時間[μs]
+ExposureTime: 1000
+# フレームレートの設定[fps]
+fps: 10 # 撮影スパン[ms]100
+# 保存ディレクトリ
+SaveDirectory: 'output_dir'
+# データ保存用HDDのパス
+HDDPath: 'D:/' 

@@ -1,0 +1,15 @@
+SET CHARACTER_SET_CLIENT = utf8mb4;
+SET CHARACTER_SET_CONNECTION = utf8mb4;
+
+DROP TABLE if exists t_inspection;
+CREATE TABLE t_inspection (
+  `inspection_id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '検査トランザクションID',
+  `ai_threshold` INTEGER NOT NULL COMMENT 'AI閾値',
+  `inspection_dt` TIMESTAMP COMMENT '検査日時',
+  `file_path` VARCHAR(4096) COMMENT 'ファイルパス',
+  `status` BOOLEAN DEFAULT FALSE COMMENT '検査ステータス',
+  `results` VARCHAR(20) DEFAULT NULL COMMENT '検査結果（無欠点、こぶし、節あり）',
+  `create_dt` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
+  `update_dt` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
+  PRIMARY KEY (`inspection_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='検査トランザクションテーブル';

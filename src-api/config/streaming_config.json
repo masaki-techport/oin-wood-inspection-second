@@ -1,0 +1,54 @@
+{
+  "camera": {
+    "frame_rate": 10,
+    "quality": 85,
+    "max_concurrent_streams": 5,
+    "buffer_size": 10,
+    "timeout_seconds": 30,
+    "enable_compression": true
+  },
+  "sse": {
+    "update_interval": 0.5,
+    "max_connections": 100,
+    "heartbeat_interval": 30.0,
+    "connection_timeout": 60,
+    "retry_delay": 3000,
+    "enable_compression": false
+  },
+  "file": {
+    "chunk_size": 8192,
+    "max_concurrent_streams": 20,
+    "enable_compression": true,
+    "cache_headers": true,
+    "max_file_size_mb": 500,
+    "timeout_seconds": 60
+  },
+  "data": {
+    "batch_size": 100,
+    "max_concurrent_streams": 10,
+    "enable_compression": true,
+    "timeout_seconds": 120,
+    "max_memory_mb": 100
+  },
+  "error_handling": {
+    "retry_attempts": 3,
+    "retry_delay": 1.0,
+    "exponential_backoff": true,
+    "max_retry_delay": 30.0,
+    "circuit_breaker_threshold": 5,
+    "circuit_breaker_timeout": 60
+  },
+  "monitoring": {
+    "enable_metrics": true,
+    "metrics_interval": 5.0,
+    "enable_health_checks": true,
+    "health_check_interval": 30.0,
+    "log_level": "INFO",
+    "max_log_size_mb": 100
+  },
+  "_metadata": {
+    "version": "1.0",
+    "last_updated": "2025-07-25T08:50:58.898206",
+    "description": "Streaming services configuration"
+  }
+}

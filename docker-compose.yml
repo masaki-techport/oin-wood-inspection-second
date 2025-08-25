@@ -1,0 +1,27 @@
+version: "3"
+
+services:
+  api:
+    image: mcr.microsoft.com/devcontainers/python:1-3.12-bullseye
+    tty: true
+    volumes:
+      - .:/workspace:cached
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    environment:
+      TZ: "Asia/Tokyo"
+      DISPLAY: "${DISPLAY}"
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    privileged: true
+    network_mode: "host"
+    ports:
+      - "8000:8000"
+
+  node-app:
+    image: mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm
+    tty: true
+    volumes:
+      - .:/workspace:cached
+    # command: sleep infinity
+    environment:
+      TZ: "Asia/Tokyo"
