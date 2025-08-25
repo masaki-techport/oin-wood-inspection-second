@@ -32,6 +32,7 @@ class AppConfig:
         if os.path.exists(self.config_file_path):
             try:
                 self.config.read(self.config_file_path)
+                # Use print here since logging isn't initialized yet during config loading
                 print(f"[CONFIG] Loaded configuration from {self.config_file}")
             except Exception as e:
                 print(f"[CONFIG] Error loading config file: {e}")
@@ -68,6 +69,15 @@ class AppConfig:
         self.config.set('UI', 'polling_interval', '200')
         self.config.set('UI', 'notification_timeout', '5000')
         
+        # Logging settings
+        self.config.add_section('LOGGING')
+        self.config.set('LOGGING', 'log_directory', './log')
+        self.config.set('LOGGING', 'log_level', 'INFO')
+        self.config.set('LOGGING', 'rotation_time', '00:00')
+        self.config.set('LOGGING', 'retention_days', '7')
+        self.config.set('LOGGING', 'max_file_size_mb', '10')
+        self.config.set('LOGGING', 'console_logging', '1')
+        
         self.save_config()
         
     def save_config(self):
@@ -77,6 +87,7 @@ class AppConfig:
         try:
             with open(CONFIG_DIR + "/" + self.config_file, 'w') as f:
                 self.config.write(f)
+            # Use print here since logging isn't initialized yet during config loading
             print(f"[CONFIG] Configuration saved to {self.config_file}")
         except Exception as e:
             print(f"[CONFIG] Error saving config file: {e}")
@@ -180,6 +191,52 @@ class AppConfig:
             Default camera type
         """
         return self.get('CAMERA', 'default_camera_type', 'webcam')
+    
+    # Logging configuration methods
+    def get_log_directory(self) -> str:
+        """
+        Get log directory path
+        
+        Returns:
+            Log directory path
+        """
+        return self.get('LOGGING', 'log_directory', './log')
+    
+    def get_log_level(self) -> str:
+        """
+        Get logging level
+        
+        Returns:
+            Log level string
+        """
+        return self.get('LOGGING', 'log_level', 'INFO')
+    
+    def get_log_retention_days(self) -> int:
+        """
+        Get log retention period in days
+        
+        Returns:
+            Number of days to retain logs
+        """
+        return self.getint('LOGGING', 'retention_days', 7)
+    
+    def get_log_rotation_time(self) -> str:
+        """
+        Get log rotation time
+        
+        Returns:
+            Log rotation time in HH:MM format
+        """
+        return self.get('LOGGING', 'rotation_time', '00:00')
+    
+    def is_console_logging_enabled(self) -> bool:
+        """
+        Check if console logging is enabled
+        
+        Returns:
+            True if console logging is enabled
+        """
+        return self.getboolean('LOGGING', 'console_logging', True)
 
 # Global configuration instance
 app_config = AppConfig()
