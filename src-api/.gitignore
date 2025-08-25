@@ -61,6 +61,10 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Logging directory contents (but keep directory structure)
+source/log/
+config/log/
+
 # Flask stuff:
 instance/
 .webassets-cache

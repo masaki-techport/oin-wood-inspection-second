@@ -17,6 +17,9 @@ from sqlalchemy import desc, asc, func
 from typing import List, Dict, Any, Optional
 from db import InspectionPresentation
 from __init__ import CONFIG_DIR
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/inspections")
 
@@ -634,9 +637,7 @@ async def update_inspection_settings(settings_update: InspectionSettingsUpdate):
         }
         
     except Exception as e:
-        print(f"Error updating inspection settings: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error updating inspection settings: {str(e)}", exc_info=True)
         return {
             "result": False,
             "message": f"Failed to update inspection settings: {str(e)}"
