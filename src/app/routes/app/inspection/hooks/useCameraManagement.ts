@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import { api } from '@/lib/api-client';
 import { CameraType, UseCameraManagementReturn } from '../types';
 import { getBaslerConfig, getWebcamConfig, getUSBConfig } from '@/config/camera-config';
 import { getCameraApiConfig, logApiConfig } from '@/config/api-config';
@@ -12,11 +13,27 @@ export interface CameraError {
   timestamp: number;
 }
 
+// Camera API response types
+interface CameraSnapshotResponse {
+  status?: string;
+  image?: string;
+  error?: string;
+}
+
+interface CameraConnectionResponse {
+  connected: boolean;
+  error?: string;
+}
+
 // Network status tracking
 interface NetworkStatus {
   isOnline: boolean;
   lastCheck: number;
   retryCount: number;
+  consecutiveFailures: number;
+  lastSuccessTime?: number;
+  circuitBreakerState: 'closed' | 'open' | 'half-open';
+  nextRetryTime?: number;
 }
 
 /**
@@ -34,7 +51,9 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
   const [networkStatus, setNetworkStatus] = useState<NetworkStatus>({
     isOnline: true,
     lastCheck: Date.now(),
-    retryCount: 0
+    retryCount: 0,
+    consecutiveFailures: 0,
+    circuitBreakerState: 'closed'
   });
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -99,33 +118,50 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
     };
   };
 
-  // Retry logic with exponential backoff
-  const getRetryDelay = (retryCount: number, errorType: CameraError['type']): number => {
+  // Enhanced retry logic with circuit breaker and intelligent backoff
+  const getRetryDelay = (retryCount: number, errorType: CameraError['type'], consecutiveFailures: number): number => {
+    // Circuit breaker: if too many consecutive failures, open circuit
+    if (consecutiveFailures >= 10) {
+      return 30000; // 30 seconds before trying again
+    }
+    
+    // If failures are moderate, use longer delays
+    if (consecutiveFailures >= 5) {
+      return 15000; // 15 seconds
+    }
+    
     switch (errorType) {
       case 'network':
-        // Exponential backoff: 1s, 2s, 4s, 8s, max 30s
-        return Math.min(1000 * Math.pow(2, retryCount), 30000);
+        // Progressive backoff based on consecutive failures
+        return Math.min(1000 * Math.pow(1.5, Math.min(retryCount, 6)), 20000);
       case 'hardware':
-        // Linear retry every 5 seconds, max 3 attempts
-        return retryCount < 3 ? 5000 : -1; // -1 means no more retries
+        // Hardware issues need more recovery time
+        return retryCount < 5 ? 8000 + (retryCount * 2000) : -1;
       case 'configuration':
         // No automatic retry for configuration errors
         return -1;
       case 'api':
-        // Linear retry every 2 seconds, max 5 attempts
-        return retryCount < 5 ? 2000 : -1;
+        // API errors get moderate retry delays
+        return retryCount < 8 ? 3000 + (retryCount * 1000) : -1;
       default:
-        return retryCount < 3 ? 3000 : -1;
+        return retryCount < 5 ? 5000 : -1;
     }
   };
 
-  // Clear error state
+  // Clear error state and reset circuit breaker
   const clearError = () => {
     setCameraError(null);
-    setNetworkStatus(prev => ({ ...prev, retryCount: 0 }));
+    setNetworkStatus(prev => ({ 
+      ...prev, 
+      retryCount: 0, 
+      consecutiveFailures: 0,
+      circuitBreakerState: 'closed',
+      lastSuccessTime: Date.now(),
+      nextRetryTime: undefined
+    }));
   };
 
-  // Set error with retry logic
+  // Enhanced error handling with circuit breaker pattern
   const setErrorWithRetry = (error: CameraError, retryCallback: () => void) => {
     // Check if component is unmounted before setting error or retrying
     if (isUnmountedRef.current) {
@@ -135,16 +171,31 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
     
     setCameraError(error);
     
-    const retryDelay = getRetryDelay(networkStatus.retryCount, error.type);
-    
-    if (retryDelay > 0) {
-      console.log(`[Camera] Retrying in ${retryDelay}ms (attempt ${networkStatus.retryCount + 1})`);
+    setNetworkStatus(prev => {
+      const newConsecutiveFailures = prev.consecutiveFailures + 1;
+      const newRetryCount = prev.retryCount + 1;
       
-      setNetworkStatus(prev => ({
+      // Update circuit breaker state
+      let newCircuitState = prev.circuitBreakerState;
+      if (newConsecutiveFailures >= 10 && prev.circuitBreakerState === 'closed') {
+        newCircuitState = 'open';
+        console.log('[Camera] Circuit breaker opened due to excessive failures');
+      }
+      
+      return {
         ...prev,
-        retryCount: prev.retryCount + 1,
-        lastCheck: Date.now()
-      }));
+        retryCount: newRetryCount,
+        consecutiveFailures: newConsecutiveFailures,
+        lastCheck: Date.now(),
+        circuitBreakerState: newCircuitState,
+        isOnline: error.type !== 'network'
+      };
+    });
+    
+    const retryDelay = getRetryDelay(networkStatus.retryCount, error.type, networkStatus.consecutiveFailures);
+    
+    if (retryDelay > 0 && networkStatus.circuitBreakerState !== 'open') {
+      console.log(`[Camera] Retrying in ${retryDelay}ms (attempt ${networkStatus.retryCount + 1}, failures: ${networkStatus.consecutiveFailures})`);
       
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
@@ -156,11 +207,33 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
           console.log('[Camera Management] Component unmounted during retry, cancelling');
           return;
         }
-        console.log(`[Camera] Retrying connection...`);
+        
+        // Try to close circuit breaker if we're in half-open state
+        if (networkStatus.circuitBreakerState === 'half-open') {
+          console.log(`[Camera] Testing connection with circuit breaker half-open...`);
+        } else {
+          console.log(`[Camera] Retrying connection...`);
+        }
+        
         retryCallback();
       }, retryDelay);
+    } else if (networkStatus.circuitBreakerState === 'open') {
+      console.log(`[Camera] Circuit breaker is open, scheduling recovery attempt in 30s`);
+      
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
+      
+      // Schedule circuit breaker to half-open after 30 seconds
+      retryTimeoutRef.current = setTimeout(() => {
+        if (!isUnmountedRef.current) {
+          console.log('[Camera] Circuit breaker transitioning to half-open for test');
+          setNetworkStatus(prev => ({ ...prev, circuitBreakerState: 'half-open' }));
+          retryCallback();
+        }
+      }, 30000);
     } else {
-      console.log(`[Camera] Max retries reached or no retry for error type: ${error.type}`);
+      console.log(`[Camera] Max retries reached for error type: ${error.type}`);
     }
   };
 
@@ -190,13 +263,14 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
     
     const config = getBaslerConfig();
     try {
-      const res = await axios.get(`${config.apiBaseUrl}${config.endpoints.snapshot}`, {
-        timeout: 5000 // 5 second timeout
+      const res: CameraSnapshotResponse = await api.get(config.endpoints.snapshot, {
+        timeout: 5000, // Reduced timeout for faster failure detection
+        suppressGlobalError: true // Suppress automatic error notifications for camera polling
       });
 
       // Check for error status in response
-      if (res.data.status === "error" || res.data.status === "disconnected" || res.data.status === "no_frame") {
-        console.warn(`Basler status: ${res.data.status}, error: ${res.data.error || 'Unknown error'}`);
+      if (res.status === "error" || res.status === "disconnected" || res.status === "no_frame") {
+        console.warn(`Basler status: ${res.status}, error: ${res.error || 'Unknown error'}`);
 
         // Set dropped frame indicator
         if (!droppedRef.current) {
@@ -205,11 +279,11 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
         }
 
         // If disconnected, create hardware error and try to reconnect
-        if (res.data.status === "disconnected") {
+        if (res.status === "disconnected") {
           const error: CameraError = {
             type: 'hardware',
             message: 'Baslerカメラが切断されました',
-            details: res.data.error || 'Camera disconnected',
+            details: res.error || 'Camera disconnected',
             timestamp: Date.now()
           };
           setErrorWithRetry(error, fetchBaslerImage);
@@ -225,14 +299,14 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
       }
 
       // Handle valid image
-      if (res.data.image) {
+      if (res.image) {
         // Check again if component is still mounted before updating state
         if (isUnmountedRef.current) {
           console.log('[Camera Management] Component unmounted during image processing, skipping state updates');
           return;
         }
         
-        setImage(`data:image/jpeg;base64,${res.data.image}`);
+        setImage(`data:image/jpeg;base64,${res.image}`);
 
         // Clear any previous errors on successful connection
         if (cameraError) {
@@ -245,11 +319,14 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
           setDroppedFrame(false);
         }
 
-        // Update network status
+        // Update network status - reset all error counters on success
         setNetworkStatus(prev => ({
           isOnline: true,
           lastCheck: Date.now(),
-          retryCount: 0
+          retryCount: 0,
+          consecutiveFailures: 0,
+          circuitBreakerState: 'closed' as const,
+          lastSuccessTime: Date.now()
         }));
 
         // Reset polling interval if needed
@@ -276,7 +353,9 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
       setNetworkStatus(prev => ({
         isOnline: error.type !== 'network',
         lastCheck: Date.now(),
-        retryCount: prev.retryCount
+        retryCount: prev.retryCount,
+        consecutiveFailures: prev.consecutiveFailures,
+        circuitBreakerState: prev.circuitBreakerState
       }));
     }
   };
@@ -291,13 +370,14 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
     
     const config = selectedCameraType === 'usb' ? getUSBConfig() : getWebcamConfig();
     try {
-      const res = await axios.get(`${config.apiBaseUrl}${config.endpoints.snapshot}`, {
-        timeout: 5000 // 5 second timeout
+      const res: CameraSnapshotResponse = await api.get(config.endpoints.snapshot, {
+        timeout: 5000, // Reduced timeout for faster failure detection
+        suppressGlobalError: true // Suppress automatic error notifications for camera polling
       });
 
       // Check response status
-      if (res.data.status === "error" || res.data.status === "disconnected" || res.data.status === "no_frame") {
-        console.warn(`Webcam status: ${res.data.status}, error: ${res.data.error || 'Unknown error'}`);
+      if (res.status === "error" || res.status === "disconnected" || res.status === "no_frame") {
+        console.warn(`Webcam status: ${res.status}, error: ${res.error || 'Unknown error'}`);
 
         // Set dropped frame indicator
         if (!droppedRef.current) {
@@ -306,11 +386,11 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
         }
 
         // If disconnected, create hardware error and try to reconnect
-        if (res.data.status === "disconnected") {
+        if (res.status === "disconnected") {
           const error: CameraError = {
             type: 'hardware',
             message: `${selectedCameraType === 'usb' ? 'USB' : 'Web'}カメラが切断されました`,
-            details: res.data.error || 'Camera disconnected',
+            details: res.error || 'Camera disconnected',
             timestamp: Date.now()
           };
           setErrorWithRetry(error, fetchWebcamImage);
@@ -326,14 +406,14 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
       }
 
       // Handle valid image
-      if (res.data.image) {
+      if (res.image) {
         // Check again if component is still mounted before updating state
         if (isUnmountedRef.current) {
           console.log('[Camera Management] Component unmounted during webcam image processing, skipping state updates');
           return;
         }
         
-        setImage(`data:image/jpeg;base64,${res.data.image}`);
+        setImage(`data:image/jpeg;base64,${res.image}`);
 
         // Clear any previous errors on successful connection
         if (cameraError) {
@@ -346,11 +426,14 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
           setDroppedFrame(false);
         }
 
-        // Update network status
+        // Update network status - reset all error counters on success  
         setNetworkStatus(prev => ({
           isOnline: true,
           lastCheck: Date.now(),
-          retryCount: 0
+          retryCount: 0,
+          consecutiveFailures: 0,
+          circuitBreakerState: 'closed' as const,
+          lastSuccessTime: Date.now()
         }));
 
         // Reset polling interval if it was slowed down
@@ -377,7 +460,9 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
       setNetworkStatus(prev => ({
         isOnline: error.type !== 'network',
         lastCheck: Date.now(),
-        retryCount: prev.retryCount
+        retryCount: prev.retryCount,
+        consecutiveFailures: prev.consecutiveFailures,
+        circuitBreakerState: prev.circuitBreakerState
       }));
     }
   };
@@ -404,12 +489,14 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
       }
 
       // Connect to webcam via Python backend
-      await axios.post(`${config.apiBaseUrl}${config.endpoints.disconnect}`, {}).catch(() => { });
-      await axios.post(`${config.apiBaseUrl}${config.endpoints.connect}`);
+      await api.post(config.endpoints.disconnect, {}).catch(() => { });
+      await api.post(config.endpoints.connect);
 
       // Check connection
-      const res = await axios.get(`${config.apiBaseUrl}${config.endpoints.isConnected}`);
-      const connected = res.data.connected === true;
+      const res: CameraConnectionResponse = await api.get(config.endpoints.isConnected, {
+        suppressGlobalError: true // Suppress notifications for connection checks
+      });
+      const connected = res.connected === true;
       
       // Check if component is still mounted before updating state
       if (isUnmountedRef.current) {
@@ -422,7 +509,7 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
       if (!connected) return;
 
       // Start continuous capture
-      await axios.post(`${config.apiBaseUrl}${config.endpoints.start}`);
+      await api.post(config.endpoints.start);
       await fetchWebcamImage();
       
       // Only set interval if component is still mounted
@@ -439,8 +526,8 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
   const stopWebcam = async () => {
     const config = selectedCameraType === 'usb' ? getUSBConfig() : getWebcamConfig();
     if (intervalRef.current) clearInterval(intervalRef.current);
-    await axios.post(`${config.apiBaseUrl}${config.endpoints.stop}`, {}).catch(() => { });
-    await axios.post(`${config.apiBaseUrl}${config.endpoints.disconnect}`, {}).catch(() => { });
+    await api.post(config.endpoints.stop, {}).catch(() => { });
+    await api.post(config.endpoints.disconnect, {}).catch(() => { });
   };
 
   const initBasler = async () => {
@@ -453,8 +540,8 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
     const config = getBaslerConfig();
     try {
       // 残っている場合は停止して切断する
-      await axios.post(`${config.apiBaseUrl}${config.endpoints.stop}`, {}).catch(() => { });
-      await axios.post(`${config.apiBaseUrl}${config.endpoints.disconnect}`, {}).catch(() => { });
+      await api.post(config.endpoints.stop, {}).catch(() => { });
+      await api.post(config.endpoints.disconnect, {}).catch(() => { });
 
       // If preview is disabled, don't initialize camera for preview
       if (!enablePreview) {
@@ -466,11 +553,13 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
       }
 
       // カメラに接続する
-      await axios.post(`${config.apiBaseUrl}${config.endpoints.connect}`);
+      await api.post(config.endpoints.connect);
 
       // 接続を確認する
-      const res = await axios.get(`${config.apiBaseUrl}${config.endpoints.isConnected}`);
-      const connected = res.data.connected === true;
+      const res: CameraConnectionResponse = await api.get(config.endpoints.isConnected, {
+        suppressGlobalError: true // Suppress notifications for connection checks
+      });
+      const connected = res.connected === true;
       
       // Check if component is still mounted before updating state
       if (isUnmountedRef.current) {
@@ -483,7 +572,7 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
       if (!connected) return;
 
       // 接続が成功した場合は画像の取得を開始する
-      await axios.post(`${config.apiBaseUrl}${config.endpoints.start}`);
+      await api.post(config.endpoints.start);
       await fetchBaslerImage();
       
       // Only set interval if component is still mounted
@@ -500,8 +589,8 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
   const stopBasler = async () => {
     const config = getBaslerConfig();
     if (intervalRef.current) clearInterval(intervalRef.current);
-    await axios.post(`${config.apiBaseUrl}${config.endpoints.stop}`, {}).catch(() => { });
-    await axios.post(`${config.apiBaseUrl}${config.endpoints.disconnect}`, {}).catch(() => { });
+    await api.post(config.endpoints.stop, {}).catch(() => { });
+    await api.post(config.endpoints.disconnect, {}).catch(() => { });
   };
 
   const handleCameraTypeChange = async (newCameraType: CameraType) => {
@@ -678,7 +767,9 @@ export const useCameraManagement = (enablePreview: boolean = true): UseCameraMan
     setNetworkStatus({
       isOnline: true,
       lastCheck: Date.now(),
-      retryCount: 0
+      retryCount: 0,
+      consecutiveFailures: 0,
+      circuitBreakerState: 'closed'
     });
     
     console.log('[Camera Management] Camera stopped successfully');

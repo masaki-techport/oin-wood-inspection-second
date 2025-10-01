@@ -13,6 +13,7 @@ const CameraViewScreen: React.FC = () => {
   const { navigate } = useNavigate();
   const { isDebugMode } = useDebugMode();
   const [showCameraModal, setShowCameraModal] = useState(false);
+  const [isNavigatingHome, setIsNavigatingHome] = useState(false);
 
   // Use the camera management hook to handle camera operations
   const {
@@ -27,13 +28,22 @@ const CameraViewScreen: React.FC = () => {
     stopCamera
   } = useCameraManagement();
 
-  // Handle navigation back to TOP view
+  // Handle navigation back to TOP view with immediate feedback
   const handleNavigateHome = async () => {
-    // Stop camera before navigating
-    if (stopCamera) {
-      await stopCamera();
-    }
+    console.log('[CAMERA VIEW] 完了 button clicked - navigating to home');
+    
+    // Set loading state immediately for instant feedback
+    setIsNavigatingHome(true);
+    
+    // Navigate immediately without waiting for camera to stop
     navigate('/');
+    
+    // Stop camera in background (don't await to prevent blocking navigation)
+    if (stopCamera) {
+      stopCamera().catch((error) => {
+        console.error('[CAMERA VIEW] Error stopping camera:', error);
+      });
+    }
   };
 
   return (
@@ -140,9 +150,14 @@ const CameraViewScreen: React.FC = () => {
         {/* 完了 Button - Bottom Right */}
         <button
           onClick={() => handleNavigateHome()}
-          className="absolute bottom-6 right-6 bg-cyan-800 hover:bg-cyan-900 text-white px-8 py-3 rounded text-lg font-medium transition-colors shadow-lg"
+          disabled={isNavigatingHome}
+          className={`absolute bottom-6 right-6 px-8 py-3 rounded text-lg font-medium transition-colors shadow-lg ${
+            isNavigatingHome 
+              ? 'bg-gray-500 cursor-not-allowed text-gray-300' 
+              : 'bg-cyan-800 hover:bg-cyan-900 text-white'
+          }`}
         >
-          完了
+          {isNavigatingHome ? '移動中...' : '完了'}
         </button>
       </div>
     </div>

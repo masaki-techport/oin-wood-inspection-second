@@ -5,7 +5,6 @@ import HomePage from './app/home';
 import CameraPage from './app/camera/CameraPage';
 import { InspectionScreen } from './app/inspection';
 import InferencePage from './app/inference';
-// import ShootingScreen from './app/shooting'; // Commented out - file doesn't exist
 import SettingScreen from './app/inspection/setting';
 import InspectionHistoryScreen from './app/inspection/inspection-history';
 import CameraViewScreen from './app/camera-view';
@@ -28,10 +27,6 @@ export const createRouter = (queryClient: QueryClient) =>
       path: '/inference',
       element: <InferencePage />,
     },
-    // {
-    //   path: '/shooting',
-    //   element: <ShootingScreen />,
-    // },
     {
       path: '/setting',
       element: <SettingScreen />,

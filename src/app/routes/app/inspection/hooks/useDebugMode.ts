@@ -135,30 +135,38 @@ export const useDebugMode = (): UseDebugModeReturn => {
   };
 
   // Function to test an image URL
-  const testImage = (imagePath: string) => {
+  const testImage = (imagePath: string, inspectionId?: number) => {
     if (!imagePath) return;
-    
+
     // Test various approaches to loading the image
-    console.log(`Testing image URL for path: ${imagePath}`);
-    
+    console.log(`Testing image URL for path: ${imagePath}, inspectionId: ${inspectionId}`);
+
+    // Note: inspection_id is now required by the API
+    if (!inspectionId) {
+      console.warn('Cannot test image URL without inspection_id - API requires it');
+      setTestImageUrl('');
+      setShowTestImage(false);
+      return;
+    }
+
     // 1. Try the standard API path approach
-    const standardUrl = `/api/file?path=${encodeURIComponent(imagePath)}`;
+    const standardUrl = `/api/file?path=${encodeURIComponent(imagePath)}&inspection_id=${inspectionId}`;
     console.log(`Test approach 1 - Standard API path: ${standardUrl}`);
-    
+
     // 2. Try extracting filename only
     const filename = imagePath.split(/[\\/]/).pop();
     if (filename) {
-      const filenameUrl = `/api/file?path=${encodeURIComponent(filename)}&convert=jpg`;
+      const filenameUrl = `/api/file?path=${encodeURIComponent(filename)}&inspection_id=${inspectionId}&convert=jpg`;
       console.log(`Test approach 2 - Filename only: ${filenameUrl}`);
     }
-    
+
     // 3. Try extracting date folder if available
     const datePattern = imagePath.match(/\d{8}_\d{4}/g);
     if (datePattern && datePattern.length > 0 && filename) {
       const dateFolder = datePattern[datePattern.length - 1];
-      const dateFolderUrl = `/api/file?path=${encodeURIComponent(`src-api/data/images/inspection/${dateFolder}/${filename}`)}&convert=jpg`;
+      const dateFolderUrl = `/api/file?path=${encodeURIComponent(`src-api/data/images/inspection/${dateFolder}/${filename}`)}&inspection_id=${inspectionId}&convert=jpg`;
       console.log(`Test approach 3 - Date folder: ${dateFolderUrl}`);
-      
+
       // Use this as our primary test URL since it's likely to work
       setTestImageUrl(dateFolderUrl);
     } else {

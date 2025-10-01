@@ -50,6 +50,7 @@ export interface InspectionData {
   presentation_ready?: boolean;
   presentation_images?: PresentationImage[];
   inspection_dt?: string;
+  processing_active?: boolean;
 }
 
 export interface InspectionResultData {
@@ -75,6 +76,10 @@ export interface SensorStatus {
   inspection_results: InspectionResultData | null;
   inspection_results_loading?: boolean;
   inspection_results_error?: string | null;
+  processing_active?: boolean;
+  capture?: {
+    processing_active?: boolean;
+  };
 }
 
 // Event Types
@@ -119,6 +124,7 @@ export interface ControlButtonsProps {
   onStop: () => void;
   onTop: () => void;
   isActive: boolean;
+  isNavigatingHome?: boolean;
 }
 
 export interface SensorControlsProps {
@@ -134,8 +140,8 @@ export interface SensorControlsProps {
 export interface ControlPanelProps {
   selectedCameraType: CameraType;
   onCameraTypeChange: (type: CameraType) => void;
-  aiThreshold: number;
-  setAiThreshold: (value: number) => void;
+  aiThreshold?: number;
+  setAiThreshold?: (value: number) => void;
   status: string;
   onStart: () => void;
   onStop: () => void;
@@ -149,41 +155,44 @@ export interface ControlPanelProps {
   onToggleSensorB?: () => void;
   sensorAActive?: boolean;
   sensorBActive?: boolean;
+  isNavigatingHome?: boolean;
 }
 
 export interface ResultDisplayProps {
   inspectionResult: string;
   defectType: string;
+  // When true, render only the top title (no overlay or details panel)
+  titleOnly?: boolean;
 }
 
 export interface PresentationImageCardProps {
   groupName: string;
   imagePath: string | null;
   inspectionId?: number;
-  onImageTest?: (path: string) => void;
+  onImageTest?: (path: string, inspectionId?: number) => void;
+  onOpenDetails?: (inspectionId: number, options?: { group?: string; imagePath?: string }) => void;
 }
 
 export interface PresentationImagesGridProps {
   presentationImages: PresentationImage[];
   loading: boolean;
-  onImageTest?: (path: string) => void;
+  onImageTest?: (path: string, inspectionId?: number) => void;
+  onOpenDetails?: (inspectionId: number, options?: { group?: string; imagePath?: string }) => void;
 }
 
-export interface MeasurementsDisplayProps {
-  measurements: string;
-  inspectionResult: string;
-  defectType?: string;
-}
+// MeasurementsDisplayProps removed - MeasurementsDisplay now uses centralized measurement manager
 
 export interface InspectionDisplayProps {
   inspectionResult: string;
   defectType: string;
-  measurements: string;
   presentationImages: PresentationImage[];
   loadingPresentationImages: boolean;
   createdInspectionId: number | null;
   onShowDetail: (id: number) => void;
-  onImageTest?: (path: string) => void;
+  onImageTest?: (path: string, inspectionId?: number) => void;
+  onOpenDetails?: (inspectionId: number, options?: { group?: string; imagePath?: string }) => void;
+  // When true, suppress the on-screen result overlay while details modal is open
+  hideResults?: boolean;
 }
 
 export interface CameraPreviewProps {
@@ -203,7 +212,7 @@ export interface DebugPanelProps {
   recentInspections: RecentInspection[];
   loadingPresentationImages: boolean;
   loadingInspections: boolean;
-  onImageTest: (path: string) => void;
+  onImageTest: (path: string, inspectionId?: number) => void;
   showDebugPanel: boolean;
   setShowDebugPanel: (show: boolean) => void;
 }
@@ -237,10 +246,9 @@ export interface UseCameraManagementReturn {
 }
 
 export interface UseInspectionStateReturn {
-  status: string;
+  // status removed - now managed by useStatusManager
   inspectionResult: string;
   defectType: string;
-  measurements: string;
   createdInspectionId: number | null;
   presentationImages: PresentationImage[];
   loadingPresentationImages: boolean;
@@ -249,6 +257,7 @@ export interface UseInspectionStateReturn {
   handleShowDetail: (id: number) => Promise<void>;
   setShowDetail: (show: boolean) => void;
   loadPresentationImages: (id: number) => Promise<void>;
+  clearInspectionResults: () => void;
 }
 
 export interface UseSensorMonitoringReturn {
@@ -277,5 +286,18 @@ export interface UseDebugModeReturn {
   testImageUrl: string;
   showTestImage: boolean;
   setShowTestImage: (show: boolean) => void;
-  testImage: (imagePath: string) => void;
+  testImage: (imagePath: string, inspectionId?: number) => void;
+}
+
+export type NavigationAction = 'back' | 'close' | 'refresh';
+
+export interface UseBrowserNavigationReturn {
+  showConfirmDialog: boolean;
+  confirmDialogProps: {
+    title: string;
+    content: string;
+    onConfirm: () => void;
+    onClose: () => void;
+  };
+  handleNavigationAction: (action: NavigationAction) => void;
 }

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { getApiUrl } from '@/lib/api-client';
 import { useProgressiveAnalysis } from '../hooks/useStreamingData';
 import { DetectionResult, ProgressiveAnalysisData } from '../types/streaming';
 
@@ -229,7 +230,7 @@ export const ProgressiveAnalysisResults: React.FC<ProgressiveAnalysisResultsProp
       });
 
       const response = await fetch(
-        'http://localhost:8000/api/stream/analysis/multi-image',
+        `${getApiUrl()}/api/stream/analysis/multi-image`,
         {
           method: 'POST',
           body: formData,

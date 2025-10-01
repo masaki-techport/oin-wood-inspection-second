@@ -133,12 +133,16 @@ class AnalysisResultStreamer(BaseStreamingService):
         finally:
             await self.cleanup_stream(stream_id)
     
-    async def stream_batch_processing(self, files: List[UploadFile], batch_size: int = 3) -> AsyncGenerator[str, None]:
+    async def stream_batch_processing(self, files: List[UploadFile], batch_size: int = None) -> AsyncGenerator[str, None]:
         """Stream batch processing results"""
         stream_id = self.generate_stream_id()
         status = self.register_stream(stream_id, "batch_processing")
         
         try:
+            # If no batch size specified, process all files in one batch
+            if batch_size is None:
+                batch_size = len(files)
+            
             self.logger.info(f"Starting batch processing stream {stream_id} for {len(files)} files in batches of {batch_size}")
             
             yield '{"result": true, "data": {'

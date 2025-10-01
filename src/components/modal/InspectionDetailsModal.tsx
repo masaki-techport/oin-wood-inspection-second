@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { dateToString } from '@/utils/cn';
 import { Inspection, InspectionDetailsImg } from '@/types/api';
-import { fetchAllImagesByPath, fetchInspectionResultById, fetchImageDetailsByImage, fetchPresentationImages, PresentationImage } from '@/features/inspections/api/inspections-details';
+import { fetchInspectionResultById, fetchImageDetailsByImage, fetchPresentationImages, fetchInspectionImages, PresentationImage, InspectionImage } from '@/features/inspections/api/inspections-details';
 import { errorTypeColors, determineDefectStatus } from '@/utils/defectStatus';
+import { buildApiFileUrl, extractImageNoFromPath as extractImageNoFromPathUtil } from '@/utils/image-path';
 import ImagePopupModal from '@/components/modal/ImagePopupModal';
+import StandardHeader from '@/components/ui/StandardHeader';
+import NoImagePlaceholder from '@/components/ui/NoImagePlaceholder';
+import { getBackgroundColor, determineInspectionResult, determineDefectType } from '@/app/routes/app/inspection/utils/colorManager';
 
 // URL cache to avoid recalculating the same URLs
 const imageUrlCache: Record<string, string> = {};
@@ -12,91 +16,14 @@ const MAX_CACHE_SIZE = 1000;
 
 
 // Function to properly convert image paths to URLs that work with the API with performance optimizations
-const getImageUrl = (imagePath: string, options: {
+const getImageUrl = (imagePath: string, inspectionId: number, options: {
     quality?: 'low' | 'medium' | 'high';
     size?: 'thumbnail' | 'medium' | 'full';
     progressive?: boolean;
 } = {}): string => {
-    if (!imagePath) return '';
-
-    const { quality = 'medium', size = 'full', progressive = false } = options;
-    const cacheKey = `${imagePath}:${quality}:${size}:${progressive}`;
-
-    // Return cached URL if available
-    if (imageUrlCache[cacheKey]) {
-        return imageUrlCache[cacheKey];
-    }
-
-    const apiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
-    let baseUrl = '';
-
-    // Check if path already contains duplicated segments
-    const duplicateCheck = imagePath.match(/inspection[/\\].*?inspection[/\\]/i);
-    if (duplicateCheck) {
-        // Find the last occurrence of "inspection/" and keep only what follows
-        const lastInspectionIndex = imagePath.lastIndexOf("inspection");
-        if (lastInspectionIndex !== -1) {
-            const cleanPath = imagePath.substring(lastInspectionIndex);
-            const relativePath = `src-api/data/images/${cleanPath.replace(/\\/g, '/')}`;
-            baseUrl = `${apiBaseUrl}/api/file?path=${encodeURIComponent(relativePath)}`;
-        }
-    } else {
-        // 1. Extract the part after "inspection/" if it exists
-        const inspectionMatch = imagePath.match(/inspection[/\\](.*?)$/i);
-        if (inspectionMatch && inspectionMatch[1]) {
-            const relativePath = `src-api/data/images/inspection/${inspectionMatch[1].replace(/\\/g, '/')}`;
-            baseUrl = `${apiBaseUrl}/api/file?path=${encodeURIComponent(relativePath)}`;
-        } else {
-            // 2. For full paths, assume they're already properly formatted
-            baseUrl = `${apiBaseUrl}/api/file?path=${encodeURIComponent(imagePath)}`;
-        }
-    }
-
-    // Add optimization parameters
-    const params = new URLSearchParams();
-
-    // Always convert BMP to JPG for better performance
-    if (imagePath.toLowerCase().endsWith('.bmp')) {
-        params.append('convert', 'jpg');
-    }
-
-    // Add quality parameter for JPG conversion
-    if (quality === 'low') {
-        params.append('quality', '60');
-    } else if (quality === 'medium') {
-        params.append('quality', '85');
-    } else if (quality === 'high') {
-        params.append('quality', '95');
-    }
-
-    // Add size parameter for potential server-side resizing (if supported)
-    if (size === 'thumbnail') {
-        params.append('size', '150x150');
-    } else if (size === 'medium') {
-        params.append('size', '500x500');
-    }
-
-    // Add progressive loading parameter
-    if (progressive) {
-        params.append('progressive', 'true');
-    }
-
-    const finalUrl = params.toString() ? `${baseUrl}&${params.toString()}` : baseUrl;
-
-    // Cache the result
-    if (Object.keys(imageUrlCache).length < MAX_CACHE_SIZE) {
-        imageUrlCache[cacheKey] = finalUrl;
-    } else {
-        // Clear oldest 20% of cache entries
-        const keys = Object.keys(imageUrlCache);
-        const keysToRemove = Math.floor(keys.length * 0.2);
-        for (let i = 0; i < keysToRemove; i++) {
-            delete imageUrlCache[keys[i]];
-        }
-        imageUrlCache[cacheKey] = finalUrl;
-    }
-
-    return finalUrl;
+    // Delegate to shared util while retaining local caching key to avoid widespread changes
+    const url = buildApiFileUrl(imagePath, inspectionId, options as any);
+    return url;
 };
 
 // Propsの型定義
@@ -109,37 +36,84 @@ type Props = {
 type ImageItem = {
     id: number;
     path: string;
+    image_no?: number;
+    image_type?: string;
 };
 
 // Progressive image loading component with low-quality placeholders
 function ProgressiveImage({
     src,
     alt,
+    inspectionId,
     className = '',
     style = {},
     onLoad,
     onClick,
-    loading = 'lazy'
+    loading = 'lazy',
+    onImageError
 }: {
     src: string;
     alt: string;
+    inspectionId: number;
     className?: string;
     style?: React.CSSProperties;
     onLoad?: () => void;
     onClick?: () => void;
     loading?: 'lazy' | 'eager';
+    onImageError?: () => void;
 }) {
     const [imageLoaded, setImageLoaded] = useState(false);
     const [lowQualityLoaded, setLowQualityLoaded] = useState(false);
+    const [imageError, setImageError] = useState(false);
 
-    const lowQualityUrl = getImageUrl(src, { quality: 'low', progressive: true });
-    const highQualityUrl = getImageUrl(src, { quality: 'high' });
+    const lowQualityUrl = getImageUrl(src, inspectionId, { quality: 'low', progressive: true });
+    const highQualityUrl = getImageUrl(src, inspectionId, { quality: 'high' });
+
+    // Reset error state when src changes
+    useEffect(() => {
+        setImageError(false);
+        setImageLoaded(false);
+        setLowQualityLoaded(false);
+    }, [src]);
+
+    const handleImageError = () => {
+        setImageError(true);
+        setLowQualityLoaded(true); // Stop showing loading spinner
+        onImageError?.(); // Notify parent component of image error
+    };
+
+    // Show no-image placeholder if there's an error
+    if (imageError) {
+        return (
+            <div
+                style={{
+                    position: 'relative',
+                    minHeight: '48px',
+                    cursor: 'default', // Ensure no-image state is not clickable
+                    ...style
+                }}
+                className={className}
+                // Remove onClick handler for no-image state - should not be clickable
+            >
+                <NoImagePlaceholder 
+                    className="w-full h-full"
+                    alt="No Image"
+                    // No onClick passed to NoImagePlaceholder for error state
+                />
+            </div>
+        );
+    }
 
     return (
         <div
-            style={{ position: 'relative', ...style }}
+            style={{
+                position: 'relative',
+                minHeight: '48px', // Ensure minimum height to prevent layout shift
+                cursor: onClick ? 'pointer' : 'default', // Only show pointer cursor if clickable
+                ...style
+            }}
             className={className}
-            onClick={onClick}
+            {...(onClick && { onClick })}
         >
             {/* Low quality placeholder */}
             {!lowQualityLoaded && (
@@ -177,9 +151,15 @@ function ProgressiveImage({
                     opacity: imageLoaded ? 0 : 1,
                     transition: 'opacity 0.3s ease',
                     filter: 'blur(2px)',
-                    position: imageLoaded ? 'absolute' : 'static'
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover'
                 }}
                 onLoad={() => setLowQualityLoaded(true)}
+                onError={handleImageError}
                 loading={loading}
             />
 
@@ -191,12 +171,19 @@ function ProgressiveImage({
                     style={{
                         ...style,
                         opacity: imageLoaded ? 1 : 0,
-                        transition: 'opacity 0.3s ease'
+                        transition: 'opacity 0.3s ease',
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'cover'
                     }}
                     onLoad={() => {
                         setImageLoaded(true);
                         onLoad?.();
                     }}
+                    onError={handleImageError}
                     loading={loading}
                 />
             )}
@@ -205,10 +192,11 @@ function ProgressiveImage({
 }
 
 // 画像とバウンディングボックスを表示するコンポーネント
-function ImageWithBoundingBoxes({ imageUrl, boxes }: { imageUrl: string; boxes: InspectionDetailsImg | InspectionDetailsImg[] | null; }) {
+function ImageWithBoundingBoxes({ imageUrl, boxes, inspectionId }: { imageUrl: string; boxes: InspectionDetailsImg | InspectionDetailsImg[] | null; inspectionId: number; }) {
 
     const imgRef = useRef<HTMLImageElement>(null);
     const [imgSize, setImgSize] = useState<{ width: number; height: number } | null>(null);
+    const [imageError, setImageError] = useState(false);
     const displayWidth = 500; // 画像の表示幅
     const onImageLoad = () => {
         if (imgRef.current) {
@@ -220,16 +208,38 @@ function ImageWithBoundingBoxes({ imageUrl, boxes }: { imageUrl: string; boxes: 
         }
     };
 
+    const onImageError = () => {
+        setImageError(true);
+    };
+
+    // Show no-image placeholder if there's an error
+    if (imageError) {
+        return (
+            <div style={{ 
+                position: 'relative', 
+                display: 'inline-block',
+                cursor: 'default' // Ensure no-image state is not clickable
+            }}>
+                <NoImagePlaceholder 
+                    style={{ display: 'block', width: displayWidth, height: 'auto' }}
+                    alt="No Image"
+                    // No onClick passed to NoImagePlaceholder for error state
+                />
+            </div>
+        );
+    }
+
     // バウンディングボックスがない場合は画像のみを表示
     if (!boxes) {
         return (
             <div style={{ position: 'relative', display: 'inline-block' }}>
                 <img
                     ref={imgRef}
-                    src={getImageUrl(imageUrl, { quality: 'high' })}
+                    src={getImageUrl(imageUrl, inspectionId, { quality: 'high' })}
                     alt="Selected"
                     style={{ display: 'block', width: displayWidth, height: 'auto' }}
                     onLoad={onImageLoad}
+                    onError={onImageError}
                 />
             </div>
         );
@@ -245,10 +255,11 @@ function ImageWithBoundingBoxes({ imageUrl, boxes }: { imageUrl: string; boxes: 
         <div style={{ position: 'relative', display: 'inline-block' }}>
             <img
                 ref={imgRef}
-                src={getImageUrl(imageUrl, { quality: 'high' })}
+                src={getImageUrl(imageUrl, inspectionId, { quality: 'high' })}
                 alt="Selected"
                 style={{ display: 'block', width: displayWidth, height: 'auto' }}
                 onLoad={onImageLoad}
+                onError={onImageError}
             />
             {imgSize && boxes && (() => {
                 // Handle both single object and array of InspectionDetailsImg
@@ -263,17 +274,15 @@ function ImageWithBoundingBoxes({ imageUrl, boxes }: { imageUrl: string; boxes: 
 
 
 
-                    // The database stores coordinates in xyxy format (x1, y1, x2, y2)
-                    // but names them as x_position, y_position, width, height
-                    // So we need to convert from xyxy to xywh format for display
+                    // Use the correct coordinates from the database
                     const x1 = box.x_position;
                     const y1 = box.y_position;
-                    const x2 = box.width;    // This is actually x2, not width
-                    const y2 = box.height;   // This is actually y2, not height
+                    const x2 = box.x2_position;
+                    const y2 = box.y2_position;
 
-                    // Convert to actual width and height
-                    const actualWidth = x2 - x1;
-                    const actualHeight = y2 - y1;
+                    // Calculate width and height from coordinates
+                    const actualWidth = box.width;
+                    const actualHeight = box.height;
 
                     // Apply scaling
                     const left = x1 * scaleX;
@@ -337,6 +346,21 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
     // FIXED: Memoized group mapping to match backend grouping logic
     const [groupMapping, setGroupMapping] = useState<Record<number, string>>({});
     
+    // Helper function to check if an image is a presentation image
+    const isPresentationImage = (imagePath: string): boolean => {
+        if (!presentationImages.length || !imagePath) return false;
+        
+        // Extract filename from path (e.g., "No_0002.bmp")
+        const getFilename = (path: string) => path.split('/').pop()?.split('\\').pop() || path;
+        const currentFilename = getFilename(imagePath);
+        
+        // Check if this filename matches any presentation image filename
+        return presentationImages.some(presentationImg => {
+            const presentationFilename = getFilename(presentationImg.image_path);
+            return presentationFilename === currentFilename;
+        });
+    };
+    
     // Calculate group mapping when images change
     useEffect(() => {
         if (images.length === 0) return;
@@ -345,9 +369,9 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
         const imageNoData = images
             .map(img => ({
                 path: img.path,
-                imageNo: extractImageNoFromPath(img.path)
+                imageNo: img.image_no || extractImageNoFromPath(img.path)
             }))
-            .filter(item => item.imageNo !== null);
+            .filter(item => item.imageNo !== null && item.imageNo !== undefined);
         
         // Sort by image_no
         imageNoData.sort((a, b) => a.imageNo! - b.imageNo!);
@@ -376,18 +400,18 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
         }
         
         setGroupMapping(newGroupMapping);
-        console.log('🔄 Updated group mapping:', newGroupMapping);
         
     }, [images]);
     
-    const getGroupLabel = (imagePath: string) => {
-        const imageNo = extractImageNoFromPath(imagePath);
-        if (imageNo === null) {
-            console.warn(`Could not extract image_no from path: ${imagePath}`);
+    const getGroupLabel = (imagePath: string, imageNo?: number) => {
+        // Use imageNo from database if available, otherwise extract from path
+        const actualImageNo = imageNo !== undefined ? imageNo : extractImageNoFromPath(imagePath);
+        if (actualImageNo === null) {
+            console.warn(`Could not determine image_no for path: ${imagePath}`);
             return 'A'; // Default fallback
         }
         
-        return groupMapping[imageNo] || 'A'; // Use memoized mapping
+        return groupMapping[actualImageNo] || 'A'; // Use memoized mapping
     };
 
     // 検査結果ラベルと詳細ステータス
@@ -419,34 +443,14 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
 
     // Track which images are currently loading defect data
     const [loadingImageDefects, setLoadingImageDefects] = useState<Set<number>>(new Set());
+    
+    // Track which presentation images have failed to load
+    const [failedPresentationImages, setFailedPresentationImages] = useState<Set<string>>(new Set());
+    // Track which grid images have failed to load
+    const [failedGridImages, setFailedGridImages] = useState<Set<string>>(new Set());
 
     // Helper function to extract image_no from image path using "No_????" pattern
-    const extractImageNoFromPath = (imagePath: string): number | null => {
-        if (!imagePath) return null;
-
-        try {
-            // Look for "No_" followed by digits in the path
-            // Handle both forward and backward slashes, use the last occurrence
-            const matches = imagePath.match(/No_(\d+)/g);
-            if (matches && matches.length > 0) {
-                // Use the last match in case there are multiple "No_" patterns
-                const lastMatch = matches[matches.length - 1];
-                const imageNoStr = lastMatch.replace('No_', '');
-                const imageNo = parseInt(imageNoStr, 10);
-
-                if (!isNaN(imageNo)) {
-                    console.log(`Extracted image_no ${imageNo} from path: ${imagePath}`);
-                    return imageNo;
-                }
-            }
-
-            console.warn(`Could not extract image_no from path: ${imagePath}`);
-            return null;
-        } catch (error) {
-            console.error(`Error extracting image_no from path ${imagePath}:`, error);
-            return null;
-        }
-    };
+    const extractImageNoFromPath = (imagePath: string): number | null => extractImageNoFromPathUtil(imagePath);
 
     // Image preloading for better performance
     const preloadedImages = useRef<Set<string>>(new Set());
@@ -456,11 +460,32 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
         if (preloadedImages.current.has(imagePath)) return;
 
         const img = new Image();
-        img.src = getImageUrl(imagePath, { quality: 'medium' });
+        img.src = buildApiFileUrl(imagePath, inspection.inspection_id, { quality: 'medium' });
         img.onload = () => {
             preloadedImages.current.add(imagePath);
         };
     };
+
+    // If the opener passed an intent to open a specific presentation image, handle it once on mount
+    useEffect(() => {
+        const intent = (window as any).__inspectionOpenImageIntent as { group?: string; imagePath?: string } | undefined;
+        if (intent) {
+            try {
+                if (intent.group) setSelectedGroupFilter(intent.group);
+                const path = intent.imagePath || (presentationImages.find(p => p.group_name === intent.group)?.image_path);
+                if (path) {
+                    const imageNo = extractImageNoFromPath(path);
+                    if (imageNo !== null) {
+                        // Defer slightly to ensure modal content is mounted
+                        setTimeout(() => onClickImage(path, imageNo, intent.group || getGroupLabel(path)), 0);
+                    }
+                }
+            } finally {
+                delete (window as any).__inspectionOpenImageIntent;
+            }
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Intersection observer for advanced lazy loading and defect data loading
     useEffect(() => {
@@ -541,7 +566,7 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
             });
 
             if (res && res.result && res.data && res.data.length > 0) {
-                // Analyze the defect data to determine knot information
+                // Use centralized logic for defect analysis
                 const hasKnots = res.data.some((defect: any) =>
                     defect.error_type === 2 || // 死に節 (dead knot)
                     defect.error_type === 3 || // 流れ節_死 (tight knot dead)
@@ -552,21 +577,13 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
                 const hasDiscoloration = res.data.some((defect: any) => defect.error_type === 0);
                 const hasHole = res.data.some((defect: any) => defect.error_type === 1);
 
-                // Calculate length based on knot defects (if any)
-                // Check if ANY knot defect has length >= 10 (for 節あり vs こぶし classification)
+                // Calculate maximum knot length using centralized logic
                 let maxLength = 0;
-                let hasLargeKnot = false;
                 if (hasKnots) {
                     res.data.forEach((defect: any) => {
                         if (defect.error_type >= 2 && defect.error_type <= 5) {
-                            // Use the length field directly from the database if available
                             const defectLength = defect.length || 0;
                             maxLength = Math.max(maxLength, defectLength);
-
-                            // Check if this defect is large (>= 10)
-                            if (defectLength >= 10) {
-                                hasLargeKnot = true;
-                            }
                         }
                     });
                 }
@@ -577,7 +594,7 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
                         hasDefects: true,
                         hasKnots,
                         length: maxLength,
-                        hasLargeKnot,
+                        hasLargeKnot: maxLength >= 10,
                         hasDiscoloration,
                         hasHole
                     }
@@ -653,6 +670,8 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
         // Default to gray while waiting for data to load
         return 'border-gray-400';
     };
+
+
 
     // 画像クリック時の詳細取得処理 - Fixed to properly handle extracted image_no and group labels
     const onClickImage = async (src: string, imageNo: number, groupLabel?: string) => {
@@ -812,48 +831,37 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
                 setPresentationImages([]);
             });
 
-        const getRelativePath = (fullPath: string) => {
-            if (!fullPath) return '';
-            const idx = fullPath.lastIndexOf('inspection');
-            if (idx !== -1) {
-                return fullPath.substring(idx).replace(/\\/g, '/');
-            }
-            return fullPath.replace(/\\/g, '/');
-        };
+        // 1. 検査画像一覧APIの呼び出し - 新しいAPIを使用してt_inspection_imagesから取得
+        fetchInspectionImages({ id: inspection.inspection_id })
+            .then((res) => {
+                if (res && res.result && res.data && Array.isArray(res.data)) {
+                    // Convert InspectionImage[] to ImageItem[]
+                    const fullData: ImageItem[] = res.data.map((img: InspectionImage) => ({
+                        id: img.id,
+                        path: img.image_path,
+                        image_no: img.image_no,
+                        image_type: img.image_type,
+                    }));
+                    setImages(fullData);
 
-        const relativePath = getRelativePath(inspection.file_path);
-
-        // 1. 検査画像一覧APIの呼び出し with better error handling
-        if (relativePath) {
-            fetchAllImagesByPath({ path: relativePath })
-                .then((res) => {
-                    if (res && res.result && res.data && Array.isArray(res.data)) {
-                        // map id + path
-                        const fullData: ImageItem[] = res.data.map((name: string, index: number) => ({
-                            id: index,
-                            path: `data/images/${relativePath}/${name}`,
-                        }));
-                        setImages(fullData);
-
-                        // Preload first 20 images for better performance
-                        fullData.slice(0, 20).forEach((img) => {
-                            if (img && img.path) {
-                                preloadImage(img.path);
-                            }
-                        });
-                    } else {
-                        console.error('API画像エラー:', res?.message || 'Invalid response format');
-                        setImages([]);
-                    }
-                })
-                .catch((err) => {
-                    console.error('API画像呼び出し失敗:', err);
+                    // Preload first 20 images for better performance
+                    fullData.slice(0, 20).forEach((img) => {
+                        if (img && img.path) {
+                            preloadImage(img.path);
+                        }
+                    });
+                } else {
+                    console.error('API画像エラー:', res?.message || 'Invalid response format');
                     setImages([]);
-                });
-        } else {
-            console.warn('Invalid file path, cannot load images');
-            setImages([]);
-        }
+                }
+            })
+            .catch((err) => {
+                console.error('Failed to load image list:', err);
+                setImages([]);
+            })
+            .finally(() => {
+                setIsLoading(false);
+            });
 
         // 2. 検査結果詳細APIの呼び出し with better error handling
         console.log(`Fetching inspection result for ID: ${inspection.inspection_id}`);
@@ -871,21 +879,14 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
                         length,
                     } = res.data;
 
-                    // ラベル設定 - Primary result based on knots only
-                    if (knot || dead_knot || live_knot || tight_knot) {
-                        setResultLabel(length >= 10 ? '節あり​' : 'こぶし');
-                    } else {
-                        setResultLabel('無欠点');
-                    }
+                    // Use centralized logic for classification
+                    const hasKnots = knot || dead_knot || live_knot || tight_knot;
+                    const classification = determineInspectionResult(hasKnots, length, hole, discoloration);
+                    setResultLabel(classification);
 
-                    // 詳細ステータスを作成 - Secondary defect type for holes/discoloration
-                    const statusList: string[] = [];
-
-                    if (discoloration) statusList.push('変色発生');
-                    if (hole) statusList.push('穴発生');
-
-                    const combinedStatus = statusList.join('●');
-                    setDetailedStatus(combinedStatus || '');
+                    // Use centralized logic for defect type
+                    const defectType = determineDefectType(hole, discoloration);
+                    setDetailedStatus(defectType);
 
                     // Global inspection result data is no longer used for border colors
                     // Individual images now load their own defect data automatically
@@ -906,30 +907,27 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
                 setResultLabel('通信エラー');
             })
             .finally(() => {
-                setIsLoading(false);
+                // Loading state is now managed by the image loading API call
             });
     }, [inspection.inspection_id, inspection.file_path]); // Use inspection_id and file_path as dependencies
 
     // getImageUrl is now defined at the top level of the file
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-            <div className="bg-white w-[1000px] relative border-4 border-gray-800">
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 p-4">
+            <div className="bg-white modal-container max-w-[1600px] relative border-4 border-gray-800 flex flex-col">
 
-                {/* Header with OIN logo */}
-                <div className="text-white bg-cyan-800 text-2xl font-bold py-3 px-4 mb-4 flex items-center justify-between">
-                    <div className="flex items-center">
-                        <div className="bg-white text-cyan-800 px-2 py-1 rounded mr-4 font-bold text-lg">
-                            OIN
-                        </div>
-                        <span>木材検査システム　検査結果</span>
-                    </div>
-                </div>
+                {/* Header with standardized styling */}
+                <StandardHeader
+                    title="木材検査システム　検査結果"
+                    variant="modal"
+                    showLogo={true}
+                />
 
                 {/* Body */}
-                <div className='relative px-6 pb-6'>
-                    {/* 時間・板No - Centered and on same row */}
-                    <div className="text-center mb-6 text-xl font-bold">
+                <div className='relative modal-body'>
+                    {/* 時間・板No - Left aligned */}
+                    <div className="text-left mb-4 text-responsive-xl font-bold">
                         <span className="mr-12">
                             {inspection.inspection_dt ? dateToString(inspection.inspection_dt) : '日時不明'}
                         </span>
@@ -937,36 +935,30 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
                     </div>
 
                     {/* 閉じるボタン - Positioned in top right of body */}
-                    <div className="absolute top-4 right-6">
+                    <div className="absolute top-4 right-4">
                         <button
                             onClick={onClose}
-                            className="bg-cyan-800 text-white font-bold text-lg px-4 py-1 rounded border-2 border-white"
+                            className="bg-cyan-800 text-white font-bold text-responsive-lg px-4 py-1 rounded border-2 border-white"
                         >
                             閉じる
                         </button>
                     </div>
 
-                    {/* Status indicators - Center layout */}
-                    <div className="flex justify-center gap-4 mb-8">
-                        <div className={`${isLoading ? 'bg-gray-500' :
-                                resultLabel === '通信エラー' ? 'bg-red-800' :
-                                    resultLabel === '無欠点' ? 'bg-green-600' :
-                                        resultLabel === 'こぶし' ? 'bg-yellow-600' :
-                                            resultLabel === '節あり​' ? 'bg-red-600' :
-                                                'bg-red-600'
-                            } text-white font-bold text-lg px-8 py-2 border-2 border-black`}>
+                    {/* Status indicators - Left layout */}
+                    <div className="flex justify-start gap-4 mb-4 flex-wrap">
+                        <div className={`${getBackgroundColor(resultLabel)} text-white font-bold text-responsive-lg px-8 py-2 border-2 border-black`}>
                             {resultLabel}
                         </div>
                         {detailedStatus && (
-                            <div className="bg-orange-500 text-white font-bold text-lg px-8 py-2 border-2 border-black">
+                            <div className="bg-orange-500 text-white font-bold text-responsive-lg px-8 py-2 border-2 border-black">
                                 {detailedStatus}
                             </div>
                         )}
                     </div>
 
-                    {/* Presentation Images (A-E) - Top section with wood board visualization */}
-                    <div className="flex justify-center mb-8">
-                        <div className="grid grid-cols-5 gap-4">
+                    {/* Presentation Images (A-E) - Centered and bigger */}
+                    <div className="flex justify-center mb-8" style={{ margin: '20px 0 40px 0' }}>
+                        <div className="presentation-grid">
                             {['A', 'B', 'C', 'D', 'E'].map((label, i) => {
                                 const presentationImage = presentationImages.find(img => img.group_name === label);
                                 console.log(`Group ${label}: found image:`, presentationImage);
@@ -996,36 +988,42 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
                                     }
                                 }
 
-                                const borderColor = (presentationImage && imageNo !== null) ? getBorderColor(imageNo) : 'border-green-500';
+                                const borderColor = (presentationImage && imageNo !== null) ? getBorderColor(imageNo) : 'border-gray-400';
 
                                 return (
                                     <div key={`presentation-${label}-${presentationImage?.id || i}`} className="flex flex-col items-center">
                                         {/* Wood board visualization */}
-                                        <div className={`w-40 h-30 border-4 ${borderColor} bg-white mb-2 relative cursor-pointer overflow-hidden`}
-                                            onClick={() => {
-                                                if (presentationImage && imageNo !== null) {
-                                                    console.log(`Presentation image clicked: Group=${label}, ImageNo=${imageNo}, Path=${presentationImage.image_path}`);
-                                                    onClickImage(presentationImage.image_path, imageNo, label);
-                                                } else {
-                                                    console.warn(`Cannot click presentation image: Group=${label}, ImageNo=${imageNo}, HasImage=${!!presentationImage}`);
-                                                }
-                                            }}>
+                                        <div className={`presentation-image ${presentationImage && !failedPresentationImages.has(presentationImage.image_path) ? `border-4 ${borderColor}` : 'border-4 border-gray-400'} bg-white mb-2 relative overflow-hidden`}
+                                            // Remove onClick from parent container - let ProgressiveImage handle it
+                                            >
                                             {/* Show actual image instead of yellow section */}
                                             {presentationImage ? (
                                                 <ProgressiveImage
                                                     src={presentationImage.image_path}
                                                     alt={`Group ${label}`}
-                                                    className="w-full h-full object-cover"
+                                                    inspectionId={inspection.inspection_id}
+                                                    className="w-full h-full object-contain"
                                                     loading="eager"
+                                                    // Only pass onClick if we have a valid presentation image that hasn't failed to load
+                                                    onClick={presentationImage && imageNo !== null && !failedPresentationImages.has(presentationImage.image_path) ? () => {
+                                                        setSelectedGroupFilter(label);
+                                                        onClickImage(presentationImage.image_path, imageNo!, label);
+                                                    } : undefined}
+                                                    onImageError={() => {
+                                                        // Track failed presentation images
+                                                        setFailedPresentationImages(prev => new Set(prev).add(presentationImage.image_path));
+                                                    }}
                                                 />
                                             ) : (
-                                                <div className="w-full h-full bg-gray-200 flex items-center justify-center text-gray-500 text-sm">
-                                                    No Image
-                                                </div>
+                                                <NoImagePlaceholder 
+                                                    className="w-full h-full"
+                                                    alt="No Image Available"
+                                                    // No onClick passed to NoImagePlaceholder for no-image state
+                                                />
                                             )}
                                         </div>
-                                        {/* Label */}
-                                        <div className="text-xl font-bold">
+                                        {/* Group Label Only */}
+                                        <div className="text-responsive-lg font-bold">
                                             {label}
                                         </div>
                                     </div>
@@ -1034,14 +1032,15 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
                         </div>
                     </div>
 
-                    {/* Bottom section with group dropdown above image grid */}
-                    <div className="flex flex-col gap-4">
-                        {/* Group dropdown - moved above image grid */}
-                        <div className="flex justify-start">
+                    {/* Bottom section with dropdown and image grid on same row - Moved down for larger presentation images */}
+                    <div className="flex gap-4 mt-8">
+                        {/* Group dropdown - on same row as grid */}
+                        <div className="flex flex-col justify-start">
                             <select
                                 value={selectedGroupFilter}
                                 onChange={(e) => setSelectedGroupFilter(e.target.value)}
                                 className="border-2 border-gray-400 rounded px-3 py-2 text-sm bg-white min-w-[100px]"
+                                style={{ height: 'fit-content' }}
                             >
                                 <option value="all">全て</option>
                                 <option value="A">A</option>
@@ -1053,73 +1052,93 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
                         </div>
 
                         {/* Image grid */}
-                        <div className="w-full">
+                        <div className="flex-1">
                             <div
                                 ref={gridRef}
-                                className="border-4 border-gray-800 bg-white p-2"
+                                className="border-4 border-gray-800 bg-white overflow-x-hidden"
                                 style={{
-                                    height: '200px',
+                                    height: 'clamp(140px, 20vh, 180px)',
+                                    minHeight: '140px',
+                                    maxHeight: '180px',
+                                    padding: '12px 16px',
                                     overflowY: images.filter((img) => {
                                         if (selectedGroupFilter === 'all') return true;
-                                        // FIXED: Use path-based grouping to match backend logic
-                                        const imageGroup = getGroupLabel(img.path);
+                                        // Use database image_no for grouping
+                                        const imageGroup = getGroupLabel(img.path, img.image_no);
                                         return imageGroup === selectedGroupFilter;
-                                    }).length > 40 ? 'auto' : 'hidden'
+                                    }).length > 20 ? 'auto' : 'hidden'
                                 }}
                             >
-                                <div className="grid grid-cols-10 gap-1">
+                                <div className="responsive-grid h-full">
                                     {images.length > 0 ? images
                                         .filter((img) => {
                                             if (selectedGroupFilter === 'all') return true;
-                                            // FIXED: Use path-based grouping to match backend logic
-                                            const imageGroup = getGroupLabel(img.path);
+                                            // Use database image_no for grouping
+                                            const imageGroup = getGroupLabel(img.path, img.image_no);
                                             return imageGroup === selectedGroupFilter;
                                         })
                                         .map((img, i) => {
-                                            // FIXED: Extract actual image_no from path for consistency
-                                            const extractedImageNo = extractImageNoFromPath(img.path);
-                                            const imageGroup = getGroupLabel(img.path);
-                                            
-                                            // Use extracted image_no for API calls and border colors
-                                            const borderColor = extractedImageNo !== null ? getBorderColor(extractedImageNo) : 'border-gray-400';
+                                            // Use image_no from database if available, otherwise extract from path
+                                            const extractedImageNo = img.image_no || extractImageNoFromPath(img.path);
+                                            const imageGroup = getGroupLabel(img.path, img.image_no);
 
+                                            // Determine if this image failed to load
+                                            const isFailedImage = failedGridImages.has(img.path);
+                                            // Use extracted image_no for API calls and border colors; force gray when failed
+                                            const borderColor = extractedImageNo !== null && !isFailedImage ? getBorderColor(extractedImageNo) : 'border-gray-400';
+
+                                            // Check if this image is a presentation image
+                                            const isPresentation = isPresentationImage(img.path);
+                                            
                                             return (
                                                 <div
                                                     key={`grid-${img.id}-${imageDefectStatus[extractedImageNo || img.id] ? 'loaded' : 'loading'}`}
-                                                    className={`w-16 h-12 border-2 ${borderColor} bg-white cursor-pointer relative overflow-hidden`}
+                                                    className={`grid-image ${isPresentation ? `presentation-thumbnail ${borderColor}` : `border-2 ${borderColor}`} bg-white relative overflow-hidden`}
                                                     data-image-path={img.path}
                                                     data-image-no={extractedImageNo || img.id}
-                                                    onClick={() => {
-                                                        if (extractedImageNo !== null) {
-                                                            console.log(`✅ Grid image clicked: ExtractedImageNo=${extractedImageNo}, Path=${img.path}, Group=${imageGroup}`);
-                                                            onClickImage(img.path, extractedImageNo, imageGroup);
-                                                        } else {
-                                                            console.error(`❌ Could not extract image_no from path: ${img.path}`);
-                                                        }
+                                                    // Remove onClick from parent container - let ProgressiveImage handle it
+                                                    style={{ 
+                                                        // Add visual indication for non-clickable state
+                                                        opacity: extractedImageNo !== null && !isFailedImage ? 1 : 0.7
                                                     }}
                                                 >
                                                     {/* Show actual thumbnail image instead of yellow section */}
                                                     <ProgressiveImage
                                                         src={img.path}
                                                         alt={`Image ${extractedImageNo || img.id}`}
+                                                        inspectionId={inspection.inspection_id}
                                                         className="w-full h-full object-cover"
                                                         loading="lazy"
+                                                        // Only pass onClick if we have a valid image number and image not failed to load
+                                                        onClick={extractedImageNo !== null && !isFailedImage ? () => {
+                                                            console.log(`✅ Grid image clicked: ExtractedImageNo=${extractedImageNo}, Path=${img.path}, Group=${imageGroup}`);
+                                                            onClickImage(img.path, extractedImageNo, imageGroup);
+                                                        } : undefined}
+                                                        onImageError={() => {
+                                                            setFailedGridImages(prev => new Set(prev).add(img.path));
+                                                        }}
                                                     />
+                                                    
                                                 </div>
                                             );
                                         }) : (
-                                        <div className="col-span-10 flex items-center justify-center h-20 text-gray-500">
+                                        <div className="flex items-center justify-center w-full h-full text-gray-500">
                                             {isLoading ? (
-                                                <img
-                                                    src="/image-loading.gif"
-                                                    alt="画像を読み込み中..."
-                                                    style={{
-                                                        width: '40px',
-                                                        height: '40px',
-                                                        objectFit: 'contain'
-                                                    }}
-                                                />
-                                            ) : '画像データがありません'}
+                                                <div className="flex flex-col items-center justify-center">
+                                                    <img
+                                                        src="/image-loading.gif"
+                                                        alt="画像を読み込み中..."
+                                                        style={{
+                                                            width: '40px',
+                                                            height: '40px',
+                                                            objectFit: 'contain'
+                                                        }}
+                                                    />
+                                                    <span className="mt-2 text-sm">画像を読み込み中...</span>
+                                                </div>
+                                            ) : (
+                                                <span>画像データがありません</span>
+                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -1143,6 +1162,7 @@ const InspectionDetailsModal = ({ inspection, onClose }: Props) => {
                         imageIdentifier={selectedGroup}
                         defectData={selectedPopupInfo}
                         defectStatus={determineDefectStatus(selectedPopupInfo)}
+                        inspectionId={inspection.inspection_id}
                         isLoading={loadingDetail}
                         error={apiError}
                         onRetry={() => {

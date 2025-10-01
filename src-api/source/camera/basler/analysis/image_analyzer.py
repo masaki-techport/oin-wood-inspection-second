@@ -13,6 +13,9 @@ from db import Inspection, InspectionResult
 from db.inspection_details import InspectionDetails
 from db.engine import SessionLocal
 
+# Import the new LengthCalculator class
+from .length_calculator import LengthCalculator
+
 logger = logging.getLogger('BaslerCamera.ImageAnalyzer')
 
 # Configure performance metrics
@@ -27,6 +30,7 @@ class ImageAnalyzer:
     def __init__(self, camera_instance):
         """Initialize with a reference to the parent camera object"""
         self.camera = camera_instance
+        self.length_calculator = LengthCalculator()
         
     def analyze_image(self, image_path: str, shared_inspection_id: int = None) -> Dict[str, Any]:
         """
@@ -42,14 +46,37 @@ class ImageAnalyzer:
         """
         start_time = time.time()
         logger.info(f"🔍 Starting image analysis for: {image_path}")
+        
+        # Start timing measurement for image analysis
+        timing_collector = getattr(self.camera, 'timing_collector', None)
+        analysis_measurement_id = None
+        if timing_collector:
+            analysis_measurement_id = timing_collector.start_measurement(
+                "image_analysis", 
+                {"image_path": image_path, "shared_inspection_id": shared_inspection_id}
+            )
+        
         try:
             # Run inference on the image with performance tracking
             inference_start = time.time()
             logger.info(f"🔍 Running inference on image: {image_path}")
+            
+            # Start timing measurement for inference
+            inference_measurement_id = None
+            if timing_collector:
+                inference_measurement_id = timing_collector.start_measurement(
+                    "inference", 
+                    {"image_path": image_path}
+                )
+            
             inference_results = self.camera.inference_service.predict_image(image_path)
             inference_time = time.time() - inference_start
             PERFORMANCE_METRICS['inference_time'].append(inference_time)
             logger.info(f"🔍 Inference completed in {inference_time:.3f}s")
+            
+            # End timing measurement for inference
+            if timing_collector and inference_measurement_id:
+                timing_collector.end_measurement("inference", inference_measurement_id)
             
             if not inference_results.get("success", False):
                 logger.warning(f"Inference failed: {inference_results.get('error', 'Unknown error')}")
@@ -101,6 +128,14 @@ class ImageAnalyzer:
             # Prepare data structures for batch database operations
             db_operation_start = time.time()
             
+            # Start timing measurement for database operations
+            db_measurement_id = None
+            if timing_collector:
+                db_measurement_id = timing_collector.start_measurement(
+                    "database_operations", 
+                    {"image_path": image_path, "detection_count": len(filtered_detections)}
+                )
+            
             # Prepare all inspection details for batch insertion
             inspection_details = []
             result_flags = {
@@ -117,16 +152,25 @@ class ImageAnalyzer:
             for detection in filtered_detections:
                 class_id = detection["class_id"]
                 confidence = detection["confidence"]
-                bbox = detection["bbox"]  # [x, y, width, height]
+                bbox = detection["bbox"]  # [x1, y1, x2, y2] format after xywh2xyxy conversion
                 
-                # Calculate length as the maximum of width and height, divided by 100 to match condition
-                length = max(bbox[2], bbox[3]) / 100
+                # Validate bbox format before processing
+                if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                    logger.error(f"Skipping detection with invalid bbox format: {bbox}")
+                    continue
                 
-                # Keep track of the maximum length across all detections
-                max_length = max(max_length, length)
+                # Calculate length using the new LengthCalculator class
+                length = self.length_calculator.calculate_defect_length(bbox, image_path)
                 
-                # Debug logging for length calculation
-                logger.debug(f"Detection class_id={class_id}, bbox={bbox}, calculated_length={length}, max_length_so_far={max_length}")
+                if length is not None:
+                    # Keep track of the maximum length across all detections
+                    max_length = max(max_length, length)
+                    
+                    # Debug logging for length calculation
+                    logger.debug(f"Detection class_id={class_id}, bbox={bbox}, calculated_length={length}, max_length_so_far={max_length}")
+                else:
+                    logger.warning(f"Failed to calculate length for detection class_id={class_id}, bbox={bbox}")
+                    continue
                 
                 # Update result flags
                 if class_id == 0:  # discoloration
@@ -146,39 +190,38 @@ class ImageAnalyzer:
                     result_flags['tight_knot'] = True
                     result_flags['knot'] = True
                 
-                # Prepare detail record for batch insertion
+                # Extract coordinates from bbox [x1, y1, x2, y2]
+                x1, y1, x2, y2 = bbox
+                
+                # Calculate actual width and height from coordinates
+                actual_width = x2 - x1
+                actual_height = y2 - y1
+                
+                # Prepare detail record for batch insertion with all coordinates
                 inspection_details.append({
                     'error_type': class_id,
                     'error_type_name': japanese_class_names.get(class_id, f"Unknown class {class_id}"),
-                    'x_position': bbox[0],
-                    'y_position': bbox[1],
-                    'width': bbox[2],
-                    'height': bbox[3],
+                    'x_position': x1,
+                    'y_position': y1,
+                    'x2_position': x2,
+                    'y2_position': y2,
+                    'width': actual_width,
+                    'height': actual_height,
                     'length': length,
                     'confidence': confidence,
                     'image_path': image_path,
                     'image_no': image_no  # Use the extracted image number
                 })
             
-            # Determine the inspection result based on flags
-            inspection_result = '無欠点'  # Default: No defects
-                           
-            # Update based on detection types
-            if result_flags['dead_knot'] or result_flags['knot'] or result_flags['tight_knot'] or result_flags['live_knot']:
-                logger.debug(f"Knot detected: max_length={max_length}, threshold=10")
-                if max_length > 10:
-                    inspection_result = '節あり'
-                    logger.debug(f"Set result to '節あり' (max_length {max_length} > 10)")
-                else:
-                    inspection_result = 'こぶし'
-                    logger.debug(f"Set result to 'こぶし' (max_length {max_length} <= 10)")
-            else:
-                logger.debug(f"No knots detected, keeping result as '無欠点'")
+            # Determine the inspection result using the LengthCalculator
+            has_knots = result_flags['dead_knot'] or result_flags['knot'] or result_flags['tight_knot'] or result_flags['live_knot']
+            inspection_result = self.length_calculator.determine_inspection_result(has_knots, max_length)
+            logger.debug(f"Inspection result determined: {inspection_result}, has_knots={has_knots}, max_length={max_length}")
                 
             inspection_data = {
                 'ai_threshold': self.camera.ai_threshold,
-                'file_path': os.path.dirname(image_path),
-                'status': confidence_above_threshold,
+                'folder_path': os.path.dirname(image_path),
+                'status': True,  # Set status to True when inspection is completed (regardless of defects found)
                 'results': inspection_result,
                 'details': []
             }
@@ -203,9 +246,8 @@ class ImageAnalyzer:
                                 logger.debug(f"Using shared inspection ID: {shared_inspection_id}")
                                 inspection_id = shared_inspection_id
                                 
-                                # Update inspection status and results if needed
-                                if confidence_above_threshold and not inspection.status:
-                                    inspection.status = True
+                                # Update inspection status to True when inspection is completed (regardless of defects found)
+                                inspection.status = True
                                 
                                 # Update results if we found defects that are more severe than current result
                                 current_result = inspection.results or '無欠点'
@@ -226,8 +268,8 @@ class ImageAnalyzer:
                                 inspection = Inspection(
                                     ai_threshold=self.camera.ai_threshold,
                                     inspection_dt=datetime.now(),
-                                    file_path=os.path.dirname(image_path),
-                                    status=confidence_above_threshold,
+                                    folder_path=os.path.dirname(image_path),
+                                    status=True,  # Set status to True when inspection is completed
                                     results=inspection_data['results']
                                 )
                                 session.add(inspection)
@@ -238,8 +280,8 @@ class ImageAnalyzer:
                             inspection = Inspection(
                                 ai_threshold=self.camera.ai_threshold,
                                 inspection_dt=datetime.now(),
-                                file_path=os.path.dirname(image_path),
-                                status=confidence_above_threshold,
+                                folder_path=os.path.dirname(image_path),
+                                status=True,  # Set status to True when inspection is completed
                                 results=inspection_data['results']
                             )
                             session.add(inspection)
@@ -251,13 +293,33 @@ class ImageAnalyzer:
                             InspectionResult.inspection_id == inspection_id
                         ).first()
                         
+                        # Query the maximum length from inspection_details for this inspection
+                        try:
+                            from sqlalchemy import func
+                            max_details_length = session.query(
+                                func.max(InspectionDetails.length)
+                            ).filter(
+                                InspectionDetails.inspection_id == inspection_id,
+                                InspectionDetails.length.isnot(None)  # Exclude NULL values
+                            ).scalar()
+                            
+                            if max_details_length is not None and max_details_length > 0:
+                                logger.debug(f"Found maximum length {max_details_length} mm from inspection_details")
+                                # Use this value if it's greater than our current max_length
+                                if max_details_length > max_length:
+                                    max_length = max_details_length
+                                    logger.info(f"Updated max_length to {max_length} mm from inspection_details")
+                        except Exception as e:
+                            logger.warning(f"Error querying max length from inspection_details: {e}")
+                        
                         if not inspection_result:
                             # Create new with all flags set properly
                             inspection_result = InspectionResult(
                                 inspection_id=inspection_id,
-                                length=max_length if filtered_detections else None,
+                                length=max_length if filtered_detections else 0.0,  # Always use 0.0 instead of None to avoid NULL values
                                 **result_flags
                             )
+                            logger.debug(f"Created new InspectionResult with length={max_length if filtered_detections else 0.0} mm")
                             session.add(inspection_result)
                         else:
                             # Update existing flags (OR operation to keep existing true values)
@@ -265,9 +327,19 @@ class ImageAnalyzer:
                                 if value:
                                     setattr(inspection_result, flag, True)
                             
-                            # Update the maximum length if we found a larger one
-                            if filtered_detections and (inspection_result.length is None or max_length > inspection_result.length):
+                                                        # ENHANCED: Always ensure length is not NULL
+                            if inspection_result.length is None:
+                                # First priority: fix NULL values regardless of other conditions
+                                inspection_result.length = max_length if filtered_detections and max_length > 0 else 0.0
+                                logger.info(f"Fixed NULL length value for inspection {inspection_id}, set to {inspection_result.length} mm")
+                            elif filtered_detections and max_length > 0 and max_length > inspection_result.length:
+                                # Update only if we have a larger value
                                 inspection_result.length = max_length
+                                logger.debug(f"Updated inspection_result.length to {max_length} mm")
+                            elif inspection_result.length == 0 and filtered_detections and max_length > 0:
+                                # Special case: existing value is 0 but we have valid detections with length
+                                inspection_result.length = max_length
+                                logger.debug(f"Updated inspection_result.length from 0 to {max_length} mm")
                         
                         # True batch insert for all inspection details using bulk_save_objects
                         if inspection_details:
@@ -303,6 +375,10 @@ class ImageAnalyzer:
             db_time = time.time() - db_operation_start
             PERFORMANCE_METRICS['db_operation_time'].append(db_time)
             
+            # End timing measurement for database operations
+            if timing_collector and db_measurement_id:
+                timing_collector.end_measurement("database_operations", db_measurement_id)
+            
             # Prepare optimized return data
             result_data = {
                 "inspection_id": inspection_id,
@@ -332,6 +408,17 @@ class ImageAnalyzer:
             total_time = time.time() - start_time
             logger.info(f"🔍 Analysis completed in {total_time:.3f}s (inference: {inference_time:.3f}s, db: {db_time:.3f}s)")
             logger.info(f"🔍 Analysis result - inspection_id: {result_data.get('inspection_id')}, confidence_above_threshold: {result_data.get('confidence_above_threshold')}, results: {result_data.get('results')}")
+
+            # Update timing session metadata with inspection_id (sequential path)
+            try:
+                if timing_collector and inspection_id:
+                    timing_collector.set_session_metadata(inspection_id=inspection_id)
+            except Exception:
+                pass
+            
+            # End timing measurement for image analysis
+            if timing_collector and analysis_measurement_id:
+                timing_collector.end_measurement("image_analysis", analysis_measurement_id)
             
             return result_data
                 
@@ -341,3 +428,19 @@ class ImageAnalyzer:
             total_time = time.time() - start_time
             logger.error(f"Analysis failed after {total_time:.3f}s")
             return None
+    
+    def cleanup(self):
+        """Clean up resources when the analyzer is being destroyed."""
+        try:
+            if hasattr(self, 'length_calculator'):
+                self.length_calculator.cleanup()
+                logger.debug("ImageAnalyzer cleanup completed")
+        except Exception as e:
+            logger.error(f"Error during ImageAnalyzer cleanup: {e}")
+    
+    def __del__(self):
+        """Destructor to ensure proper cleanup of resources."""
+        try:
+            self.cleanup()
+        except Exception:
+            pass  # Ignore errors during destruction

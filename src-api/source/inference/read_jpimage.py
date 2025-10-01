@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
 import os
+import logging
 
 
 def imread(filename, flags=cv2.IMREAD_COLOR, dtype=np.uint8):
@@ -9,7 +10,7 @@ def imread(filename, flags=cv2.IMREAD_COLOR, dtype=np.uint8):
         img = cv2.imdecode(n, flags)
         return img
     except Exception as e:
-        print(e)
+        logging.getLogger(__name__).exception(e)
         return None
 
 
@@ -25,5 +26,5 @@ def imwrite(filename, img, params=None):
         else:
             return False
     except Exception as e:
-        print(e)
+        logging.getLogger(__name__).exception(e)
         return False 

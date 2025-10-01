@@ -81,13 +81,27 @@ export type InspectionDetailsImg = {
   inspection_id: number;    // 外部キー
   error_type: number;       // 
   error_type_name: string;
-  x_position: number;
-  y_position: number;
-  width: number;
-  height: number;
+  x_position: number;       // x1 (left-top X)
+  y_position: number;       // y1 (left-top Y)
+  x2_position: number;     // x2 (right-bottom X)
+  y2_position: number;     // y2 (right-bottom Y)
+  width: number;            // Calculated: x2 - x1
+  height: number;           // Calculated: y2 - y1
+  length?: number;          // Max of width and height in mm
   confidence: number;
   image_no?: number;        // 画像番号
   image_path?: string;      // 画像パス
   create_dt?: string;
   update_dt?: string;
+};
+
+// Bulk operations types
+export type BulkDeleteRequest = {
+  inspection_ids: number[];
+};
+
+export type BulkDeleteResponse = {
+  deleted_count: number;
+  failed_ids: number[];
+  deleted_folders: string[];
 };

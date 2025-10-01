@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import relationship
+import os
 
 if __package__ == "db":
     from .base import Base
@@ -24,23 +25,23 @@ class Inspection(Base):
     inspection_dt: Mapped[datetime] = mapped_column(
         nullable=False, comment="更新日時"
     )
-    file_path: Mapped[str] = mapped_column(
-        String, nullable=True, comment="画像ファイルパス"
+    folder_path: Mapped[str] = mapped_column(
+        String, nullable=True, comment="画像フォルダパス"
     )
     status: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, comment="ステータス (0: Active, 1: 削除済)"
+        Boolean, nullable=False, comment="検査ステータス (0: 削除済み, 1: 検査完了)"
     )
     results: Mapped[str] = mapped_column(
         String(20), nullable=True, comment="検査結果（無欠点、こぶし、節あり）"
     )
 
-    # create_dt / update_dt
+    # create_dt / update_dt (use local system time)
     create_dt: Mapped[datetime] = mapped_column(
-        server_default=text("CURRENT_TIMESTAMP")
+        default=datetime.now
     )
     update_dt: Mapped[datetime] = mapped_column(
-        server_default=text("CURRENT_TIMESTAMP"),
-        server_onupdate=text("CURRENT_TIMESTAMP"),
+        default=datetime.now,
+        onupdate=datetime.now,
     )
     
     # Relationship with presentation images
@@ -60,16 +61,18 @@ if __name__ == "__main__":
         import random
         import string
 
-        file_path = "data/images/test_inspection_image.png"
+        from __init__ import ROOT_DIR
+        folder_path = os.path.join(ROOT_DIR, "data", "images", "test_inspection_image.png")
 
         # select
         results = Inspection.add(
             session,
             ai_threshold=75,
             inspection_dt=datetime.now(),
-            file_path=file_path,
+            folder_path=folder_path,
             status=True)
-        print("insert record: ", results)
+        import logging
+        logging.getLogger(__name__).info("insert record: %s", results)
 
         # rollback
         session.rollback()

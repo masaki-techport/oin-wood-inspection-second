@@ -7,7 +7,7 @@ const imageUrlCache: Record<string, string> = {};
 const MAX_CACHE_SIZE = 1000;
 
 // Function to properly convert image paths to URLs that work with the API with performance optimizations
-const getImageUrl = (imagePath: string, options: {
+const getImageUrl = (imagePath: string, inspectionId: number, options: {
     quality?: 'low' | 'medium' | 'high';
     size?: 'thumbnail' | 'medium' | 'full';
     progressive?: boolean;
@@ -15,7 +15,7 @@ const getImageUrl = (imagePath: string, options: {
     if (!imagePath) return '';
 
     const { quality = 'medium', size = 'full', progressive = false } = options;
-    const cacheKey = `${imagePath}:${quality}:${size}:${progressive}`;
+    const cacheKey = `${imagePath}:${inspectionId}:${quality}:${size}:${progressive}`;
 
     // Return cached URL if available
     if (imageUrlCache[cacheKey]) {
@@ -33,17 +33,17 @@ const getImageUrl = (imagePath: string, options: {
         if (lastInspectionIndex !== -1) {
             const cleanPath = imagePath.substring(lastInspectionIndex);
             const relativePath = `src-api/data/images/${cleanPath.replace(/\\/g, '/')}`;
-            baseUrl = `${apiBaseUrl}/api/file?path=${encodeURIComponent(relativePath)}`;
+            baseUrl = `${apiBaseUrl}/api/file?path=${encodeURIComponent(relativePath)}&inspection_id=${inspectionId}`;
         }
     } else {
         // 1. Extract the part after "inspection/" if it exists
         const inspectionMatch = imagePath.match(/inspection[/\\](.*?)$/i);
         if (inspectionMatch && inspectionMatch[1]) {
             const relativePath = `src-api/data/images/inspection/${inspectionMatch[1].replace(/\\/g, '/')}`;
-            baseUrl = `${apiBaseUrl}/api/file?path=${encodeURIComponent(relativePath)}`;
+            baseUrl = `${apiBaseUrl}/api/file?path=${encodeURIComponent(relativePath)}&inspection_id=${inspectionId}`;
         } else {
             // 2. For full paths, assume they're already properly formatted
-            baseUrl = `${apiBaseUrl}/api/file?path=${encodeURIComponent(imagePath)}`;
+            baseUrl = `${apiBaseUrl}/api/file?path=${encodeURIComponent(imagePath)}&inspection_id=${inspectionId}`;
         }
     }
 
@@ -97,12 +97,14 @@ const getImageUrl = (imagePath: string, options: {
 interface CleanImageWithBoundingBoxesProps {
     imageUrl: string;
     boxes: InspectionDetailsImg | InspectionDetailsImg[] | null;
+    inspectionId: number;
 }
 
-const CleanImageWithBoundingBoxes: React.FC<CleanImageWithBoundingBoxesProps> = ({ imageUrl, boxes }) => {
+const CleanImageWithBoundingBoxes: React.FC<CleanImageWithBoundingBoxesProps> = ({ imageUrl, boxes, inspectionId }) => {
     const imgRef = useRef<HTMLImageElement>(null);
     const [imgSize, setImgSize] = useState<{ width: number; height: number } | null>(null);
-    const displayWidth = 600; // Increased from 500px to 600px for better visibility
+    const [imageError, setImageError] = useState(false);
+    const displayWidth = 800; // Enlarged image for clearer viewing in detail popup
 
     const onImageLoad = () => {
         if (imgRef.current) {
@@ -113,16 +115,34 @@ const CleanImageWithBoundingBoxes: React.FC<CleanImageWithBoundingBoxesProps> = 
         }
     };
 
+    const onImageError = () => {
+        setImageError(true);
+    };
+
+    // Show no-image placeholder if there's an error
+    if (imageError) {
+        return (
+            <div style={{ position: 'relative', display: 'inline-block' }}>
+                <img
+                    src="/no-image.png"
+                    alt="No Image"
+                    style={{ display: 'block', width: displayWidth, height: 'auto' }}
+                />
+            </div>
+        );
+    }
+
     // If no bounding boxes, display image only
     if (!boxes) {
         return (
             <div style={{ position: 'relative', display: 'inline-block' }}>
                 <img
                     ref={imgRef}
-                    src={getImageUrl(imageUrl, { quality: 'high' })}
+                    src={getImageUrl(imageUrl, inspectionId, { quality: 'high' })}
                     alt="Selected"
                     style={{ display: 'block', width: displayWidth, height: 'auto' }}
                     onLoad={onImageLoad}
+                    onError={onImageError}
                 />
             </div>
         );
@@ -136,10 +156,11 @@ const CleanImageWithBoundingBoxes: React.FC<CleanImageWithBoundingBoxesProps> = 
         <div style={{ position: 'relative', display: 'inline-block' }}>
             <img
                 ref={imgRef}
-                src={getImageUrl(imageUrl, { quality: 'high' })}
+                src={getImageUrl(imageUrl, inspectionId, { quality: 'high' })}
                 alt="Selected"
                 style={{ display: 'block', width: displayWidth, height: 'auto' }}
                 onLoad={onImageLoad}
+                onError={onImageError}
             />
             {imgSize && boxes && (() => {
                 // Handle both single object and array of InspectionDetailsImg
@@ -152,17 +173,15 @@ const CleanImageWithBoundingBoxes: React.FC<CleanImageWithBoundingBoxesProps> = 
                         return null;
                     }
 
-                    // The database stores coordinates in xyxy format (x1, y1, x2, y2)
-                    // but names them as x_position, y_position, width, height
-                    // So we need to convert from xyxy to xywh format for display
+                    // Use the correct coordinates from the database
                     const x1 = box.x_position;
                     const y1 = box.y_position;
-                    const x2 = box.width;    // This is actually x2, not width
-                    const y2 = box.height;   // This is actually y2, not height
+                    const x2 = box.x2_position;
+                    const y2 = box.y2_position;
 
-                    // Convert to actual width and height
-                    const actualWidth = x2 - x1;
-                    const actualHeight = y2 - y1;
+                    // Use the width and height directly from the database
+                    const actualWidth = box.width;
+                    const actualHeight = box.height;
 
                     // Apply scaling
                     const left = x1 * scaleX;
@@ -177,7 +196,8 @@ const CleanImageWithBoundingBoxes: React.FC<CleanImageWithBoundingBoxesProps> = 
                             key={index}
                             style={{
                                 position: 'absolute',
-                                border: `2px solid ${color}`,
+                                border: `4px solid ${color}`,
+                                boxShadow: `0 0 0 2px rgba(0,0,0,0.6)`,
                                 left,
                                 top,
                                 width,

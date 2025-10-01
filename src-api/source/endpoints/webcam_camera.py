@@ -4,8 +4,10 @@ from fastapi.responses import JSONResponse
 import base64
 import cv2
 from camera.webcam_camera import WebcamCamera
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 webcam = WebcamCamera()
 
 @router.post("/webcam/connect")
@@ -52,36 +54,70 @@ def stop_webcam():
 
 @router.get("/webcam/snapshot")
 def get_webcam_snapshot():
-    """Get a snapshot from webcam"""
+    """Get a snapshot from webcam with timeout monitoring"""
+    import time
+    start_time = time.time()
+    
     try:
+        logger.info(f"Webcam snapshot request received at {start_time}")
+        
         if not webcam.is_connected():
-            print("[WEBCAM] Webcam not connected, attempting to reconnect")
-            # Try to reconnect once
+            logger.warning("Webcam not connected, attempting to reconnect")
+            # Try to reconnect once with timeout monitoring
+            reconnect_start = time.time()
             if webcam.connect():
-                print("[WEBCAM] Reconnection successful")
+                reconnect_time = int((time.time() - reconnect_start) * 1000)
+                logger.info(f"Webcam reconnection successful in {reconnect_time}ms")
             else:
-                print("[WEBCAM] Reconnection failed, returning empty image")
-                # Return empty image instead of error
-                return {"image": "", "error": "Webcam not connected", "status": "disconnected"}
+                total_time = int((time.time() - start_time) * 1000)
+                logger.error(f"Webcam reconnection failed, returning empty image (took {total_time}ms)")
+                return {
+                    "image": "", 
+                    "error": "Webcam not connected", 
+                    "status": "disconnected",
+                    "response_time_ms": total_time
+                }
 
+        # Capture frame with timeout monitoring
+        frame_start = time.time()
         frame = webcam.get_frame()
+        frame_time = int((time.time() - frame_start) * 1000)
+        
         if not frame:
-            print("[WEBCAM] Failed to grab image from webcam, returning empty image")
-            # Return empty image instead of error
-            return {"image": "", "error": "Failed to grab image", "status": "no_frame"}
+            total_time = int((time.time() - start_time) * 1000)
+            logger.error(f"Failed to grab image from webcam, frame capture took {frame_time}ms, total {total_time}ms")
+            return {
+                "image": "", 
+                "error": "Failed to grab image", 
+                "status": "no_frame",
+                "frame_capture_time_ms": frame_time,
+                "response_time_ms": total_time
+            }
 
+        # Process image
         img = frame["image"]  # Use 'image' key instead of 'img'
         # Convert RGB back to BGR for cv2.imencode (cv2 expects BGR format)
         img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         _, buffer = cv2.imencode(".jpg", img_bgr)
         base64_img = base64.b64encode(buffer).decode("utf-8")
-        return {"image": base64_img, "status": "ok"}
+        
+        total_time = int((time.time() - start_time) * 1000)
+        return {
+            "image": base64_img, 
+            "status": "ok",
+            "frame_capture_time_ms": frame_time,
+            "response_time_ms": total_time
+        }
     except Exception as e:
-        print(f"[WEBCAM] Error in get_webcam_snapshot: {e}")
-        import traceback
-        traceback.print_exc()
+        total_time = int((time.time() - start_time) * 1000)
+        logger.exception(f"Error in get_webcam_snapshot: {e} (total time: {total_time}ms)")
         # Return empty image instead of error
-        return {"image": "", "error": str(e), "status": "error"}
+        return {
+            "image": "", 
+            "error": str(e), 
+            "status": "error",
+            "response_time_ms": total_time
+        }
 
 @router.post("/webcam/save")
 def save_webcam_image():

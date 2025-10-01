@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Integer
+from sqlalchemy import Integer, Float
 from sqlalchemy import String, text, LargeBinary, ForeignKey, Boolean
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import Mapped
@@ -37,16 +37,16 @@ class InspectionResult(Base):
     tight_knot: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("FALSE"), comment="生き節 (5)"
     )
-    length: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, comment="欠点の長さ（mm）"
+    length: Mapped[float | None] = mapped_column(
+        Float, nullable=True, comment="欠点の長さ（mm）"
     )
-    # create_dt / update_dt
+    # create_dt / update_dt (use local system time)
     create_dt: Mapped[datetime] = mapped_column(
-        server_default=text("CURRENT_TIMESTAMP")
+        default=datetime.now
     )
     update_dt: Mapped[datetime] = mapped_column(
-        server_default=text("CURRENT_TIMESTAMP"),
-        server_onupdate=text("CURRENT_TIMESTAMP"),
+        default=datetime.now,
+        onupdate=datetime.now,
     )
     def __repr__(self) -> str:
         return f""

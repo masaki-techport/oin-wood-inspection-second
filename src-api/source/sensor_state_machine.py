@@ -8,6 +8,7 @@ using two sensors (A and B) and triggering image capture accordingly.
 
 import threading
 import time
+import logging
 from typing import Callable, Optional, List
 from enum import Enum
 
@@ -65,17 +66,18 @@ class SensorStateMachine:
         self.result: Optional[SensorResult] = None
         self.on_decision = on_decision
         self._lock = threading.Lock()
+        self.logger = logging.getLogger(__name__)
         self.debug_mode = True  # Enable detailed logging
         
         # Send initial state to callback
         if self.on_decision:
             self._safe_callback(None, self.state.value)
-            print(f"[SENSOR_SM] Initialized: state={self.state.value}")
+            self.logger.debug(f"Initialized: state={self.state.value}")
     
     def reset(self):
         """Reset state machine to initial state"""
         if self.result is not None and self.on_decision:
-            print(f"[SENSOR_SM] 🔴 Calling callback with result={self.result.value}, state={self.state.value}")
+            self.logger.info(f"Calling callback with result={self.result.value}, state={self.state.value}")
             self._safe_callback(self.result.value, self.state.value)
         
         # Reset to initial state
@@ -84,7 +86,7 @@ class SensorStateMachine:
         self.last_event_time = time.time()
         self.sequence = []
         self.result = None
-        print(f"[SENSOR_SM] Reset: {old_state.value} → {self.state.value}")
+        self.logger.debug(f"Reset: {old_state.value} → {self.state.value}")
         
         # Send IDLE state callback after reset
         if self.on_decision:
@@ -106,7 +108,7 @@ class SensorStateMachine:
             
             # Timeout check
             if now - self.last_event_time > self.TIMEOUT_SEC:
-                print(f"[SENSOR_SM] Timeout detected")
+                self.logger.warning("Timeout detected")
                 self.result = SensorResult.ERROR
                 self.reset()
                 return SensorResult.ERROR
@@ -114,7 +116,7 @@ class SensorStateMachine:
             self.last_event_time = now
             self.sequence.append(event)
             
-            print(f"[SENSOR_SM] Event: {event.value}, State: {self.state.value}")
+            self.logger.debug(f"Event: {event.value}, State: {self.state.value}")
             
             # State transition logic
             if self.state == SensorState.IDLE:
@@ -171,7 +173,7 @@ class SensorStateMachine:
                 if event == SensorEvent.A_OFF:
                     # This is the key condition for saving images (left to right pass)
                     self.result = SensorResult.PASS_L_TO_R
-                    print(f"[SENSOR_SM] 🔴 SAVE CONDITION DETECTED: {self.result.value}")
+                    self.logger.info(f"SAVE CONDITION DETECTED: {self.result.value}")
                     self.reset()
                     return SensorResult.PASS_L_TO_R
                 elif event == SensorEvent.B_ON:
@@ -229,8 +231,14 @@ class SensorStateMachine:
     def _state_changed(self, old_state: SensorState):
         """Handle state change and call callback"""
         if self.on_decision and old_state != self.state:
-            print(f"[SENSOR_SM] State changed: {old_state.value} → {self.state.value}")
-            self._safe_callback(None, self.state.value)
+            self.logger.debug(f"State changed: {old_state.value} → {self.state.value}")
+            
+            # Clear inspection results when starting new inspection cycle (IDLE → B_ACTIVE)
+            if old_state == SensorState.IDLE and self.state == SensorState.B_ACTIVE:
+                # Send clear signal
+                self._safe_callback("CLEAR_RESULTS", self.state.value)
+            else:
+                self._safe_callback(None, self.state.value)
             
     def _safe_callback(self, result: Optional[str], state: str):
         """Thread-safe callback invocation with error handling"""
@@ -244,8 +252,19 @@ class SensorStateMachine:
                 # For critical results (PASS_L_TO_R), wait for callback completion
                 # to prevent race conditions with subsequent captures
                 if result == "pass_L_to_R":
-                    print(f"[SENSOR_SM] 🔴 Executing synchronous callback for critical result: {result}")
+                    self.logger.info(f"Executing synchronous callback for critical result: {result}")
                     self._do_callback(callback_fn, result, state)
+                elif result == "CLEAR_RESULTS":
+                    # Execute CLEAR_RESULTS in a separate thread for immediate response
+                    # This ensures UI clearing happens instantly without blocking the state machine
+                    self.logger.info(f"Executing immediate async callback for CLEAR_RESULTS")
+                    callback_thread = threading.Thread(
+                        target=lambda: self._do_callback(callback_fn, result, state),
+                        daemon=True,
+                        name="CLEAR_RESULTS_Callback"
+                    )
+                    callback_thread.start()
+                    # Don't wait for completion - return immediately for instant UI response
                 else:
                     # Call in a separate thread for non-critical callbacks
                     callback_thread = threading.Thread(
@@ -254,22 +273,20 @@ class SensorStateMachine:
                     )
                     callback_thread.start()
         except Exception as e:
-            print(f"[SENSOR_SM] Error preparing callback: {e}")
+            self.logger.exception(f"Error preparing callback: {e}")
     
     def _do_callback(self, callback_fn, result: Optional[str], state: str):
         """Execute callback in a separate thread with error handling"""
         try:
-            print(f"[SENSOR_SM] 🔴 Executing callback with result={result}, state={state}")
+            self.logger.debug(f"Executing callback with result={result}, state={state}")
             start_time = time.time()
             callback_fn(result, state)
             elapsed = (time.time() - start_time) * 1000
-            print(f"[SENSOR_SM] 🔴 Callback completed in {elapsed:.1f}ms")
-            if elapsed > 100:  # Log slow callbacks (>100ms)
-                print(f"[SENSOR_SM] WARNING: Slow callback ({elapsed:.1f}ms) for state={state}, result={result}")
+            self.logger.debug(f"Callback completed in {elapsed:.1f}ms")
+            if elapsed > 100:
+                self.logger.warning(f"Slow callback ({elapsed:.1f}ms) for state={state}, result={result}")
         except Exception as e:
-            print(f"[SENSOR_SM] Callback error: {e}")
-            import traceback
-            traceback.print_exc()
+            self.logger.exception(f"Callback error: {e}")
             
     def get_current_state(self) -> str:
         """Get current state as string"""

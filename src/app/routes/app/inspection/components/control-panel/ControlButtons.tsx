@@ -8,7 +8,8 @@ const ControlButtons: React.FC<ControlButtonsProps> = ({
   onStart,
   onStop,
   onTop,
-  isActive
+  isActive,
+  isNavigatingHome = false
 }) => {
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
@@ -65,13 +66,13 @@ const ControlButtons: React.FC<ControlButtonsProps> = ({
 
       <button
         onClick={onTop}
-        disabled={isActive}
-        className={`px-12 py-4 rounded-lg text-xl font-bold border-2 shadow-lg min-w-[100px] ${isActive
+        disabled={isActive || isNavigatingHome}
+        className={`px-12 py-4 rounded-lg text-xl font-bold border-2 shadow-lg min-w-[100px] ${isActive || isNavigatingHome
             ? 'bg-gray-400 text-gray-600 border-gray-500 cursor-not-allowed'
             : 'bg-blue-800 hover:bg-blue-900 text-white border-blue-900'
           }`}
       >
-        TOP
+        {isNavigatingHome ? '移動中...' : 'TOP'}
       </button>
     </>
   );

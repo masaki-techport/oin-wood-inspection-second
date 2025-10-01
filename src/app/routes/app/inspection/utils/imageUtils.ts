@@ -7,120 +7,100 @@ const imageUrlCache: Record<string, string> = {};
 const MAX_CACHE_SIZE = 1000; // Limit cache size to prevent memory growth
 
 /**
- * Converts a Windows path to an API-accessible URL
- * @param windowsPath - The windows path to convert
- * @param inspectionId - Optional inspection ID to use as a cache-busting parameter
+ * Optimized image URL generation with caching and quality options
+ * @param imagePath - The image path to convert
+ * @param inspectionId - Inspection ID for the image
+ * @param options - Quality and size options for optimization
  * @returns The API URL that can access the image
  */
-export const getImageUrl = (windowsPath: string, inspectionId?: number): string => {
-  console.log(`getImageUrl called with path: ${windowsPath}, inspectionId: ${inspectionId}`);
-  if (!windowsPath) {
+export const getImageUrl = (imagePath: string, inspectionId: number, options: {
+  quality?: 'low' | 'medium' | 'high';
+  size?: 'thumbnail' | 'medium' | 'full';
+  progressive?: boolean;
+} = {}): string => {
+  if (!imagePath) {
     return ''; // Return empty string for empty paths
   }
 
-  // Create cache key from path and inspection ID
-  const cacheKey = `${windowsPath}:${inspectionId || 'default'}`;
-  
-  // Return cached value if available
+  const { quality = 'medium', size = 'full', progressive = false } = options;
+  const cacheKey = `${imagePath}:${inspectionId}:${quality}:${size}:${progressive}`;
+
+  // Return cached URL if available
   if (imageUrlCache[cacheKey]) {
-    console.log(`Using cached URL for ${cacheKey}`);
     return imageUrlCache[cacheKey];
   }
-  
+
   try {
-    // Use relative URL instead of hardcoded localhost
-    // This ensures the URL works in any environment (dev, prod, etc.)
-    const apiBaseUrl = window.location.origin;
-    
-    // Add cache-busting parameter based on inspection ID
-    const cacheBuster = inspectionId ? `&cache=${inspectionId}` : '';
-    
-    let result = '';
+    const apiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`;
+    let baseUrl = '';
     
     // Check if path already contains duplicated segments
-    const duplicateCheck = windowsPath.match(/inspection[\/\\].*?inspection[\/\\]/i);
+    const duplicateCheck = imagePath.match(/inspection[/\\].*?inspection[/\\]/i);
     if (duplicateCheck) {
       // Find the last occurrence of "inspection/" and keep only what follows
-      const lastInspectionIndex = windowsPath.lastIndexOf("inspection");
+      const lastInspectionIndex = imagePath.lastIndexOf("inspection");
       if (lastInspectionIndex !== -1) {
-        const cleanPath = windowsPath.substring(lastInspectionIndex);
+        const cleanPath = imagePath.substring(lastInspectionIndex);
         const relativePath = `src-api/data/images/${cleanPath.replace(/\\/g, '/')}`;
-        // Use file API for image loading
-        result = `${apiBaseUrl}/api/file?path=${encodeURIComponent(relativePath)}&convert=jpg${cacheBuster}`;
+        baseUrl = `${apiBaseUrl}/api/file?path=${encodeURIComponent(relativePath)}&inspection_id=${inspectionId}`;
       }
-    }
-    
-    // If not resolved yet, try other methods
-    if (!result) {
+    } else {
       // 1. Extract the part after "inspection/" if it exists
-      const inspectionMatch = windowsPath.match(/inspection[\/\\](.*?)$/i);
+      const inspectionMatch = imagePath.match(/inspection[/\\](.*?)$/i);
       if (inspectionMatch && inspectionMatch[1]) {
         const relativePath = `src-api/data/images/inspection/${inspectionMatch[1].replace(/\\/g, '/')}`;
-        result = `${apiBaseUrl}/api/file?path=${encodeURIComponent(relativePath)}&convert=jpg${cacheBuster}`;
-      }
-      // 2. Handle paths that start with "inspection/" (common for presentation images)
-      else if (windowsPath.startsWith('inspection/')) {
-        const relativePath = `src-api/data/images/${windowsPath.replace(/\\/g, '/')}`;
-        result = `${apiBaseUrl}/api/file?path=${encodeURIComponent(relativePath)}&convert=jpg${cacheBuster}`;
-      }
-      // 3. For Windows absolute paths, try to extract just the filename
-      else if (windowsPath.match(/^[a-zA-Z]:[\/\\]/)) {
-        const filename = windowsPath.split(/[\/\\]/).pop();
-        if (filename) {
-          // Try to find the date folder pattern (YYYYMMDD_HHMM)
-          const dateMatch = windowsPath.match(/\d{8}_\d{4}/);
-          if (dateMatch) {
-            const dateFolder = dateMatch[0];
-            const relativePath = `src-api/data/images/inspection/${dateFolder}/${filename}`;
-            result = `${apiBaseUrl}/api/file?path=${encodeURIComponent(relativePath)}&convert=jpg${cacheBuster}`;
-          } else {
-            // Just use the filename as a last resort, but try to find date folder patterns in the windows path
-            // For more robustness, check for any folder pattern with 8 digits followed by underscore and 4 digits
-            const datePattern = windowsPath.match(/\d{8}_\d{4}/g);
-            const dateFolder = datePattern ? datePattern[datePattern.length - 1] : '';
-            
-            let simplePath;
-            if (dateFolder) {
-              simplePath = `src-api/data/images/inspection/${dateFolder}/${filename}`;
-              console.log(`Trying date folder path: ${simplePath}`);
-            } else {
-              simplePath = `src-api/data/images/inspection/${filename}`;
-              console.log(`Using simple filename path: ${simplePath}`);
-            }
-            result = `${apiBaseUrl}/api/file?path=${encodeURIComponent(simplePath)}&convert=jpg${cacheBuster}`;
-          }
-        } else {
-          // If we can't extract a filename, use the full path
-          result = `${apiBaseUrl}/api/file?path=${encodeURIComponent(windowsPath)}&convert=jpg${cacheBuster}`;
-        }
-      }
-      // 4. If path starts with src-api, ensure we don't duplicate it
-      else if (windowsPath.startsWith('src-api/') || windowsPath.startsWith('src-api\\')) {
-        result = `${apiBaseUrl}/api/file?path=${encodeURIComponent(windowsPath.replace(/\\/g, '/'))}&convert=jpg${cacheBuster}`;
-      }
-      // 5. For any other path, try using as-is
-      else {
-        result = `${apiBaseUrl}/api/file?path=${encodeURIComponent(windowsPath.replace(/\\/g, '/'))}&convert=jpg${cacheBuster}`;
+        baseUrl = `${apiBaseUrl}/api/file?path=${encodeURIComponent(relativePath)}&inspection_id=${inspectionId}`;
+      } else {
+        // 2. For full paths, assume they're already properly formatted
+        baseUrl = `${apiBaseUrl}/api/file?path=${encodeURIComponent(imagePath)}&inspection_id=${inspectionId}`;
       }
     }
-    
-    // Add to cache only if we have room
+
+    // Add optimization parameters
+    const params = new URLSearchParams();
+
+    // Always convert BMP to JPG for better performance
+    if (imagePath.toLowerCase().endsWith('.bmp')) {
+      params.append('convert', 'jpg');
+    }
+
+    // Add quality parameter for JPG conversion
+    if (quality === 'low') {
+      params.append('quality', '60');
+    } else if (quality === 'medium') {
+      params.append('quality', '85');
+    } else if (quality === 'high') {
+      params.append('quality', '95');
+    }
+
+    // Add size parameter for potential server-side resizing (if supported)
+    if (size === 'thumbnail') {
+      params.append('size', '150x150');
+    } else if (size === 'medium') {
+      params.append('size', '500x500');
+    }
+
+    // Add progressive loading parameter
+    if (progressive) {
+      params.append('progressive', 'true');
+    }
+
+    const finalUrl = params.toString() ? `${baseUrl}&${params.toString()}` : baseUrl;
+
+    // Cache the result
     if (Object.keys(imageUrlCache).length < MAX_CACHE_SIZE) {
-      imageUrlCache[cacheKey] = result;
+      imageUrlCache[cacheKey] = finalUrl;
     } else {
-      // If cache is full, clear the oldest 20% of entries
+      // Clear oldest 20% of cache entries
       const keys = Object.keys(imageUrlCache);
       const keysToRemove = Math.floor(keys.length * 0.2);
       for (let i = 0; i < keysToRemove; i++) {
         delete imageUrlCache[keys[i]];
       }
-      // Then add the new entry
-      imageUrlCache[cacheKey] = result;
+      imageUrlCache[cacheKey] = finalUrl;
     }
     
-    console.log(`Generated image URL: ${result}`);
-    
-    return result;
+    return finalUrl;
   } catch (error) {
     console.error('Error converting image path:', error);
     return ''; // Return empty string on error

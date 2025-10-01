@@ -1,4 +1,5 @@
 import React from 'react';
+import StandardHeader from '@/components/ui/StandardHeader';
 
 interface CameraViewHeaderProps {
   title: string;
@@ -9,9 +10,11 @@ interface CameraViewHeaderProps {
  */
 const CameraViewHeader: React.FC<CameraViewHeaderProps> = ({ title }) => {
   return (
-    <div className="bg-cyan-800 text-white text-3xl font-bold py-4 w-full text-left px-4">
-      <h1>{title}</h1>
-    </div>
+    <StandardHeader
+      title={title}
+      variant="primary"
+      showLogo={true}
+    />
   );
 };
 

@@ -32,17 +32,25 @@ class InspectionDetails(Base):
     error_type_name: Mapped[str] = mapped_column(
         String(50), nullable=False, comment="エラータイプ名"
     )
+    # Store all four coordinates of the bounding box
     x_position: Mapped[float] = mapped_column(
-        Float, nullable=False, comment="X座標"
+        Float, nullable=False, comment="X1座標 (左上X)"
     )
     y_position: Mapped[float] = mapped_column(
-        Float, nullable=False, comment="Y座標"
+        Float, nullable=False, comment="Y1座標 (左上Y)"
     )
+    x2_position: Mapped[float] = mapped_column(
+        Float, nullable=True, comment="X2座標 (右下X)"
+    )
+    y2_position: Mapped[float] = mapped_column(
+        Float, nullable=True, comment="Y2座標 (右下Y)"
+    )
+    # Width and height are now calculated from the coordinates
     width: Mapped[float] = mapped_column(
-        Float, nullable=False, comment="幅"
+        Float, nullable=False, comment="幅 (x2_position - x_position)"
     )
     height: Mapped[float] = mapped_column(
-        Float, nullable=False, comment="高さ"
+        Float, nullable=False, comment="高さ (y2_position - y_position)"
     )
     length: Mapped[float] = mapped_column(
         Float, nullable=False, server_default=text("0"), comment="長さ (幅と高さの最大値)"
@@ -57,13 +65,13 @@ class InspectionDetails(Base):
         Integer, nullable=True, comment="画像番号"
     )
     
-    # create_dt / update_dt
+    # create_dt / update_dt (use local system time)
     create_dt: Mapped[datetime] = mapped_column(
-        server_default=text("CURRENT_TIMESTAMP")
+        default=datetime.now
     )
     update_dt: Mapped[datetime] = mapped_column(
-        server_default=text("CURRENT_TIMESTAMP"),
-        server_onupdate=text("CURRENT_TIMESTAMP"),
+        default=datetime.now,
+        onupdate=datetime.now,
     )
 
     @classmethod

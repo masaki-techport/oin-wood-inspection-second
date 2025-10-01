@@ -1,4 +1,4 @@
-import { InspectionDetailsImg } from '@/types/api';
+import { InspectionDetailsImg, InspectionResult } from '@/types/api';
 
 // Type definition for image defect status (extracted from InspectionDetailsModal)
 export type ImageDefectStatus = {
@@ -9,6 +9,16 @@ export type ImageDefectStatus = {
     hasDiscoloration: boolean;
     hasHole: boolean;
 };
+
+// Interface for structured defect information for display
+export interface DefectStatusInfo {
+    classification: 'none' | 'minor' | 'major' | 'hole_discoloration';
+    displayText: string;
+    mainStatus: string;        // Main status: 無欠点、こぶし、節あり
+    subStatus: string;         // Sub status: 穴●変色あり (when applicable)
+    hasMultipleTypes: boolean;
+    details: string[];
+}
 
 // Defect status type for background colors
 export type DefectStatus = 'none' | 'minor' | 'major';
@@ -155,4 +165,139 @@ export const determineDefectStatus = (defectData: InspectionDetailsImg | Inspect
     
     // If has defects but no knots (discoloration/hole only), default to none
     return 'none';
+};
+
+/**
+ * Processes inspection results and defect details to provide structured defect information for display
+ * Implements the enhanced defect classification logic for bulk operations
+ */
+export const getDefectDisplayInfo = (
+    inspectionResult: InspectionResult,
+    defectDetails: InspectionDetailsImg[]
+): DefectStatusInfo => {
+    // If no defect details provided, analyze from inspection result
+    if (!defectDetails || defectDetails.length === 0) {
+        // Check inspection result flags for basic classification
+        const hasHole = inspectionResult.hole;
+        const hasDiscoloration = inspectionResult.discoloration;
+        const hasKnots = inspectionResult.knot || inspectionResult.dead_knot || 
+                        inspectionResult.live_knot || inspectionResult.tight_knot;
+        
+        // If no defects at all
+        if (!hasHole && !hasDiscoloration && !hasKnots) {
+            return {
+                classification: 'none',
+                displayText: '無欠点',
+                mainStatus: '無欠点',
+                subStatus: '',
+                hasMultipleTypes: false,
+                details: []
+            };
+        }
+        
+        // Determine main status based on knots
+        let mainStatus = '無欠点';
+        if (hasKnots) {
+            const isLargeKnot = inspectionResult.length >= 10;
+            mainStatus = isLargeKnot ? '節あり' : 'こぶし';
+        }
+        
+        // Determine sub status based on holes/discoloration
+        let subStatus = '';
+        if (hasHole || hasDiscoloration) {
+            const details: string[] = [];
+            if (hasHole) details.push('穴');
+            if (hasDiscoloration) details.push('変色');
+            subStatus = details.join('●') + 'あり';
+        }
+        
+        // Combine main and sub status for display
+        let displayText = mainStatus;
+        if (subStatus) {
+            displayText = `${mainStatus} (${subStatus})`;
+        }
+        
+        return {
+            classification: hasKnots ? (inspectionResult.length >= 10 ? 'major' : 'minor') : 'none',
+            displayText,
+            mainStatus,
+            subStatus,
+            hasMultipleTypes: (hasHole && hasDiscoloration) || (hasKnots && (hasHole || hasDiscoloration)),
+            details: hasKnots ? [`長さ: ${inspectionResult.length}mm`] : []
+        };
+    }
+    
+    // Analyze detailed defect data
+    const defectStatus = analyzeDefectData(defectDetails);
+    
+    // If no defects detected
+    if (!defectStatus.hasDefects) {
+        return {
+            classification: 'none',
+            displayText: '無欠点',
+            mainStatus: '無欠点',
+            subStatus: '',
+            hasMultipleTypes: false,
+            details: []
+        };
+    }
+    
+    // Determine main status based on knots
+    let mainStatus = '無欠点';
+    if (defectStatus.hasKnots) {
+        mainStatus = defectStatus.hasLargeKnot ? '節あり' : 'こぶし';
+    }
+    
+    // Determine sub status based on holes/discoloration
+    let subStatus = '';
+    if (defectStatus.hasHole || defectStatus.hasDiscoloration) {
+        const details: string[] = [];
+        if (defectStatus.hasHole) details.push('穴');
+        if (defectStatus.hasDiscoloration) details.push('変色');
+        subStatus = details.join('●') + 'あり';
+    }
+    
+    // Combine main and sub status for display
+    let displayText = mainStatus;
+    if (subStatus) {
+        displayText = `${mainStatus} (${subStatus})`;
+    }
+    
+    // Determine classification based on main status
+    let classification: 'none' | 'minor' | 'major' | 'hole_discoloration' = 'none';
+    if (defectStatus.hasKnots) {
+        classification = defectStatus.hasLargeKnot ? 'major' : 'minor';
+    } else if (defectStatus.hasHole || defectStatus.hasDiscoloration) {
+        classification = 'hole_discoloration';
+    }
+    
+    // Prepare details array
+    const details: string[] = [];
+    
+    // Add length information if available
+    if (defectStatus.length > 0) {
+        details.push(`最大長さ: ${defectStatus.length}mm`);
+    }
+    
+    // Count different knot types if knots exist
+    if (defectStatus.hasKnots) {
+        const knotTypes = defectDetails.filter(defect => 
+            defect.error_type >= 2 && defect.error_type <= 5
+        );
+        
+        const knotTypeNames = new Set(knotTypes.map(defect => defect.error_type_name));
+        if (knotTypeNames.size > 1) {
+            details.push(`種類: ${Array.from(knotTypeNames).join(', ')}`);
+        }
+    }
+    
+    return {
+        classification,
+        displayText,
+        mainStatus,
+        subStatus,
+        hasMultipleTypes: (defectStatus.hasHole && defectStatus.hasDiscoloration) || 
+                         (defectStatus.hasKnots && (defectStatus.hasHole || defectStatus.hasDiscoloration)),
+        details
+    };
 };

@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import InspectionDetailsModal from '@/components/modal/InspectionDetailsModal';
 import ResizableCameraModal from '@/components/modal/ResizableCameraModal';
+import useNavigate from '@/hooks/use-navigate';
+import BrowserNavigationDialog from './components/BrowserNavigationDialog';
 import { 
   InspectionHeader, 
   ControlPanel, 
@@ -13,9 +15,14 @@ import {
   useInspectionState, 
   useSensorMonitoring, 
   useDebugMode,
-  useCameraSettings
+  useCameraSettings,
+  useBrowserNavigation
 } from './hooks';
+import { useStatusManager } from './hooks/useStatusManager';
 import { getImageUrl } from './utils';
+import { setSensorStatus, getUpdateInspectionResultFromSensorStatus } from './utils/stateManager';
+import ErrorBoundary from './components/ErrorBoundary';
+import DataConflictErrorBoundary from './components/DataConflictErrorBoundary';
 
 // Add TypeScript declaration
 declare global {
@@ -29,6 +36,9 @@ declare global {
  * Main InspectionScreen component
  */
 const InspectionScreen: React.FC = () => {
+  // Navigation hook
+  const { navigate } = useNavigate();
+
   // Camera settings hook
   const { showCameraUI } = useCameraSettings();
 
@@ -42,12 +52,16 @@ const InspectionScreen: React.FC = () => {
     stopCamera
   } = useCameraManagement(showCameraUI);
 
-  // Inspection state hook
+  // Status manager hook - single source of truth for status
   const { 
     status, 
+    updateStatusFromSensor
+  } = useStatusManager();
+
+  // Inspection state hook
+  const { 
     inspectionResult, 
     defectType, 
-    measurements, 
     createdInspectionId, 
     presentationImages, 
     loadingPresentationImages, 
@@ -55,7 +69,8 @@ const InspectionScreen: React.FC = () => {
     showDetail, 
     handleShowDetail, 
     setShowDetail, 
-    loadPresentationImages 
+    loadPresentationImages,
+    clearInspectionResults
   } = useInspectionState();
 
   // Sensor monitoring hook
@@ -70,65 +85,45 @@ const InspectionScreen: React.FC = () => {
     toggleSensorB 
   } = useSensorMonitoring(selectedCameraType);
 
+  // Clear any stale last-inspection result on first open
+  useEffect(() => {
+    try {
+      // Clear hook-managed state if available
+      if ((window as any).clearInspectionResults) {
+        (window as any).clearInspectionResults();
+      }
+
+      // Clear any globally cached sensor results to avoid auto display
+      if ((window as any).sensorStatus) {
+        (window as any).sensorStatus.inspection_results = null;
+        (window as any).sensorStatus.inspection_results_loading = false;
+        (window as any).sensorStatus.inspection_results_error = null;
+      }
+
+      // Reset current inspection id so ResultDisplay won't fetch old DB data
+      (window as any).inspectionId = null;
+    } catch (e) {
+      // no-op
+    }
+  }, []);
+
   // Effect to update inspection result and status from sensor status
   useEffect(() => {
     if (sensorStatus) {
-      // Make sensor status globally accessible for components that need inspection results
-      (window as any).sensorStatus = sensorStatus;
+      // Store sensor status in centralized state manager
+      setSensorStatus(sensorStatus);
       
-      // Update inspection data if available
-      if (sensorStatus.inspection_data && (window as any).updateInspectionResultFromSensorStatus) {
-        // Call the function exposed by useInspectionState
-        (window as any).updateInspectionResultFromSensorStatus(sensorStatus);
+      // Get the update function from state manager and call it
+      const updateFunction = getUpdateInspectionResultFromSensorStatus();
+      if (sensorStatus.inspection_data && updateFunction) {
+        updateFunction(sensorStatus);
       }
       
-      // Determine status based on sensor state and active status
-      let statusValue = '待機中'; // Default status
-      
-      if (!sensorStatus.active) {
-        // If stopping was requested, show 停止 briefly
-        if ((window as any).stoppingRequested) {
-          statusValue = '停止';
-        } else {
-          statusValue = '待機中';
-        }
-      } else if (sensorStatus.active) {
-        // System is active
-        if (sensorStatus.sensor_a || sensorStatus.sensor_b || 
-            (sensorStatus.sensors && (sensorStatus.sensors.sensor_a || sensorStatus.sensors.sensor_b))) {
-          // Sensors are active - processing
-          statusValue = '処理中';
-        } else {
-          // No sensors triggered yet - searching
-          statusValue = '検査中';
-        }
-      }
-      
-      // Update status if updateStatus function is available
-      if ((window as any).updateStatus) {
-        (window as any).updateStatus(statusValue);
-      }
+      // Update status using centralized status manager (includes immediate sensor detection)
+      updateStatusFromSensor(sensorStatus);
     }
-  }, [sensorStatus]);
-  
-  // Mark stopping as requested when stop button is pressed
-  const handleStopWithStatus = async () => {
-    if ((window as any).updateStatus) {
-      (window as any).updateStatus('停止');
-      (window as any).stoppingRequested = true;
-    }
-    
-    // Call the actual stop handler
-    await handleStop();
-    
-    // Clear the stopping flag after a delay
-    setTimeout(() => {
-      (window as any).stoppingRequested = false;
-      if ((window as any).updateStatus) {
-        (window as any).updateStatus('待機中');
-      }
-    }, 1000); // Show '停止' for 1 second before switching to '待機中'
-  };
+  }, [sensorStatus, updateStatusFromSensor]);
+
 
   // Debug mode hook
   const { 
@@ -146,15 +141,81 @@ const InspectionScreen: React.FC = () => {
 
   // Camera modal state
   const [showCameraModal, setShowCameraModal] = useState(false);
+  const [isNavigatingHome, setIsNavigatingHome] = useState(false);
 
-  // Handle top button click
+  // Handle top button click with immediate feedback
   const handleTop = async () => {
-    // Stop camera before navigating
+    console.log('[INSPECTION] TOP button clicked - navigating to home');
+    
+    // Set loading state immediately for instant feedback
+    setIsNavigatingHome(true);
+    
+    // Navigate immediately without waiting for camera to stop
+    navigate('/');
+    
+    // Stop camera in background (don't await to prevent blocking navigation)
     if (stopCamera) {
-      await stopCamera();
+      stopCamera().catch((error) => {
+        console.error('[INSPECTION] Error stopping camera:', error);
+      });
     }
-    window.location.href = '/';
   };
+  
+  // Browser navigation handling
+  const {
+    showConfirmDialog,
+    confirmDialogProps,
+    handleNavigationAction
+  } = useBrowserNavigation({
+    status,
+    sensorStatus,
+    stopInspection: async () => {
+      // First stop the inspection
+      await handleStop();
+      
+      // Then explicitly stop the camera
+      if (stopCamera) {
+        try {
+          await stopCamera();
+          console.log('[NAVIGATION] Camera successfully stopped');
+        } catch (error) {
+          console.error('[NAVIGATION] Error stopping camera:', error);
+        }
+      }
+    }
+  });
+  
+  // Create a function to handle the back button press
+  const handleBackButton = useCallback(() => {
+    handleNavigationAction('back');
+  }, [handleNavigationAction]);
+  
+  // Create a function to handle the close button press
+  const handleCloseButton = useCallback(() => {
+    handleNavigationAction('close');
+  }, [handleNavigationAction]);
+  
+  // Create a function to handle the refresh button press
+  const handleRefreshButton = useCallback(() => {
+    handleNavigationAction('refresh');
+  }, [handleNavigationAction]);
+  
+  // Expose these handlers for external use
+  useEffect(() => {
+    (window as any).handleInspectionBackButton = handleBackButton;
+    (window as any).handleInspectionCloseButton = handleCloseButton;
+    (window as any).handleInspectionRefreshButton = handleRefreshButton;
+    
+    // Add history entry when component mounts
+    // This ensures the back button can be captured
+    window.history.pushState({ inspectionScreen: true }, document.title, window.location.href);
+    
+    return () => {
+      delete (window as any).handleInspectionBackButton;
+      delete (window as any).handleInspectionCloseButton;
+      delete (window as any).handleInspectionRefreshButton;
+    };
+  }, [handleBackButton, handleCloseButton, handleRefreshButton]);
 
   return (
     <div className="h-screen bg-white flex flex-col">
@@ -169,7 +230,7 @@ const InspectionScreen: React.FC = () => {
         setAiThreshold={setAiThreshold}
         status={status}
         onStart={handleStart}
-        onStop={handleStopWithStatus}
+        onStop={handleStop}
         onTop={handleTop}
         isActive={sensorStatus.active}
         debugMode={debugMode}
@@ -180,21 +241,46 @@ const InspectionScreen: React.FC = () => {
         onToggleSensorB={toggleSensorB}
         sensorAActive={sensorStatus.sensor_a}
         sensorBActive={sensorStatus.sensor_b}
+        isNavigatingHome={isNavigatingHome}
       />
 
       {/* Main Content Area */}
       <div className="flex-1 p-6 relative">
-        {/* Main Inspection Display */}
-        <InspectionDisplay
-          inspectionResult={inspectionResult}
-          defectType={defectType}
-          measurements={measurements}
-          presentationImages={presentationImages}
-          loadingPresentationImages={loadingPresentationImages}
-          createdInspectionId={createdInspectionId}
-          onShowDetail={handleShowDetail}
-          onImageTest={testImage}
-        />
+        {/* Main Inspection Display with Error Boundaries */}
+        <ErrorBoundary
+          resetOnPropsChange={true}
+          resetKeys={[inspectionResult, defectType, createdInspectionId?.toString() || '']}
+          onError={(error, errorInfo) => {
+            console.error('InspectionDisplay error:', error, errorInfo);
+          }}
+        >
+          <DataConflictErrorBoundary
+            dataSource="inspection-display"
+            onDataConflict={(error, dataSource) => {
+              console.error(`Data conflict in ${dataSource}:`, error);
+            }}
+          >
+            <InspectionDisplay
+              inspectionResult={inspectionResult}
+              defectType={defectType}
+              presentationImages={presentationImages}
+              loadingPresentationImages={loadingPresentationImages}
+              createdInspectionId={createdInspectionId}
+              onShowDetail={handleShowDetail}
+              onImageTest={testImage}
+              hideResults={showDetail}
+              onOpenDetails={(id, options) => {
+                // Open details, then (after modal mounts) programmatically trigger the same image popup
+                handleShowDetail(id).then(() => {
+                  if (options?.group || options?.imagePath) {
+                    // Store the intent on window for the modal to read and open the popup
+                    (window as any).__inspectionOpenImageIntent = options;
+                  }
+                });
+              }}
+            />
+          </DataConflictErrorBoundary>
+        </ErrorBoundary>
 
         {/* Camera Preview - Only show when showCameraUI is true */}
         {showCameraUI && (
@@ -257,6 +343,15 @@ const InspectionScreen: React.FC = () => {
           </>
         )}
       </div>
+      
+      {/* Confirmation Dialog for browser navigation */}
+      <BrowserNavigationDialog
+        open={showConfirmDialog}
+        onClose={confirmDialogProps.onClose}
+        onConfirm={confirmDialogProps.onConfirm}
+        title={confirmDialogProps.title}
+        content={confirmDialogProps.content}
+      />
     </div>
   );
 };

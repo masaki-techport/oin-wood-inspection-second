@@ -2,12 +2,14 @@ import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { ResultDisplayProps, InspectionResultData } from '../../types';
 import { useSensorData } from '../../hooks/useSensorData';
 import { isDebugModeEnabledSync } from '@/utils/settingsReader';
+import { getColorScheme, determineDefectType } from '../../utils/colorManager';
+import { getInspectionId, getSensorStatus, getFetchInspectionResults } from '../../utils/stateManager';
 
 /**
  * Component for displaying inspection results with detailed defect classifications
  * Shows both basic results and detailed inspection result data
  */
-const ResultDisplay: React.FC<ResultDisplayProps> = ({ inspectionResult, defectType: propDefectType }) => {
+const ResultDisplay: React.FC<ResultDisplayProps> = ({ inspectionResult, defectType: propDefectType, titleOnly }) => {
   const {
     batchResult: sensorBatchResult,
     defectType: sensorDefectType,
@@ -54,19 +56,20 @@ const ResultDisplay: React.FC<ResultDisplayProps> = ({ inspectionResult, defectT
     // Check immediately
     checkForInspectionResults();
 
-    // Set up an interval to periodically check for updates - reduced frequency
-    const interval = setInterval(checkForInspectionResults, 1000);
+    // Set up an interval to periodically check for updates - reduced frequency with error suppression
+    const interval = setInterval(checkForInspectionResults, 2000); // Reduced from 1000ms to 2000ms
 
     return () => clearInterval(interval);
   }, []);
 
   // Fetch inspection results from database when needed
   useEffect(() => {
-    // Check if window.inspectionId is available (global variable set by API)
-    if (window.inspectionId && window.inspectionId !== currentInspectionIdRef.current) {
-      currentInspectionIdRef.current = window.inspectionId;
-      fetchInspectionResult(window.inspectionId);
-      console.log(`Fetching results for inspection ID: ${window.inspectionId}`);
+    // Check if inspectionId is available in state manager
+    const inspectionId = getInspectionId();
+    if (inspectionId && inspectionId !== currentInspectionIdRef.current) {
+      currentInspectionIdRef.current = inspectionId;
+      fetchInspectionResult(inspectionId);
+      console.log(`Fetching results for inspection ID: ${inspectionId}`);
     }
   }, [fetchInspectionResult]);
 
@@ -85,13 +88,19 @@ const ResultDisplay: React.FC<ResultDisplayProps> = ({ inspectionResult, defectT
     }
   }, [sensorBatchResult, sensorDefectType]);
 
-  // Determine background color based on result - memoized
-  const getBackgroundColor = useMemo(() => {
-    if (displayResult === '無欠点') return 'bg-green-500';
-    if (displayResult === 'こぶし') return 'bg-yellow-500';
-    if (displayResult === '節あり') return 'bg-red-500';
-    return 'bg-gray-500'; // Default fallback
-  }, [displayResult]);
+  // Listen for clear events to reset display
+  useEffect(() => {
+    const onClear = () => {
+      console.log('🧹 ResultDisplay: Clearing display due to inspection:clear event');
+      setDisplayResult(null);
+      setDisplayDefectType(null);
+      setInspectionResults(null);
+    };
+    window.addEventListener('inspection:clear', onClear);
+    return () => window.removeEventListener('inspection:clear', onClear);
+  }, []);
+
+  // Use centralized color manager - no local color definitions needed
 
   // Helper function to render defect classification details - memoized
   const renderDefectDetails = useCallback(() => {
@@ -122,13 +131,13 @@ const ResultDisplay: React.FC<ResultDisplayProps> = ({ inspectionResult, defectT
     if (resultsError) {
       const handleRetry = () => {
         // Try to get the current inspection ID and retry fetching results
-        const currentInspectionId = (window as any).sensorStatus?.inspection_data?.inspection_id || 
+        const currentInspectionId = getSensorStatus()?.inspection_data?.inspection_id || 
                                    currentInspectionIdRef.current ||
-                                   window.inspectionId;
+                                   getInspectionId();
         
-        if (currentInspectionId && (window as any).fetchInspectionResults) {
+        if (currentInspectionId && getFetchInspectionResults()) {
           console.log(`Manual retry for inspection ID: ${currentInspectionId}`);
-          (window as any).fetchInspectionResults(currentInspectionId);
+          getFetchInspectionResults()!(currentInspectionId);
         }
       };
 
@@ -247,34 +256,63 @@ const ResultDisplay: React.FC<ResultDisplayProps> = ({ inspectionResult, defectT
     }
   }, [isLoadingResults, resultsError, inspectionResults]);
 
+  // Suppress any cached result while processing temp sections/new circle
+  try {
+    const ss: any = (window as any).sensorStatus;
+    const createdInspectionId = (window as any).inspectionId as number | undefined;
+    const images = (window as any).presentationImages as any[] | undefined;
+    const isProcessing = Boolean(
+      ss?.capture?.status === '処理中' ||
+      ss?.sensors?.clear_requested === true ||
+      ss?.capture?.processing_active === true ||
+      ss?.processing_active === true
+    );
+    // Additionally, hide if the currently displayed presentation images are not for
+    // the current inspection id (prevents mismatch hydration)
+    const mismatchedImages = Array.isArray(images) && images.length > 0 &&
+      createdInspectionId && images.some(img => img?.inspection_id !== createdInspectionId);
+    if (mismatchedImages) {
+      return null;
+    }
+    if (isProcessing) {
+      return null;
+    }
+  } catch (_) { /* noop */ }
+
   // Don't render anything if we don't have a result to display
   if (!displayResult) return null;
 
   try {
+    // Get the current status colors using centralized color manager
+    const statusColors = getColorScheme(displayResult);
+
     return (
-      <div className={`absolute inset-0 ${getBackgroundColor} flex flex-col items-center pt-6`}>
-        <div className="flex items-center gap-6">
+      <>
+        {/* Title showing current defect status - positioned to not block content */}
+        <div className="absolute top-6 left-1/2 transform -translate-x-1/2 flex items-center gap-6" style={{ zIndex: 10 }}>
+          {/* Main result display */}
           <div className="text-4xl font-bold px-12 py-6 rounded-lg shadow-lg flex items-center justify-center bg-white text-black">
             {displayResult}
           </div>
 
-          {displayDefectType && (displayDefectType.includes('穴') || displayDefectType.includes('変色')) && (
+          {/* Additional defect type information */}
+          {displayDefectType && (
             <div className="text-3xl font-bold bg-orange-500 text-black px-8 py-6 rounded-lg shadow-lg flex items-center justify-center">
-              {displayDefectType.includes('穴') && displayDefectType.includes('変色')
-                ? '穴●変色発生'
-                : displayDefectType.includes('穴')
-                  ? '穴発生'
-                  : displayDefectType.includes('変色')
-                    ? '変色発生'
-                    : ''
-              }
+              {displayDefectType}
             </div>
           )}
         </div>
 
-        {/* Detailed inspection results */}
-        {renderDefectDetails()}
-      </div>
+        {/* Background and details are omitted in titleOnly mode */}
+        {!titleOnly && (
+          <>
+            <div className={`absolute inset-0 ${statusColors.background}`} style={{ zIndex: -1 }} />
+            <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2" style={{ zIndex: 5 }}>
+              {renderDefectDetails()}
+            </div>
+          </>
+        )}
+      </>
     );
   } catch (error) {
     console.error('Error rendering ResultDisplay component:', error);

@@ -9,6 +9,7 @@ This module provides sensor monitoring with support for:
 
 import threading
 import time
+import logging
 from typing import Callable, Optional
 import random
 import sys
@@ -23,11 +24,13 @@ if OIN_DIR not in sys.path:
     sys.path.append(os.path.join(OIN_DIR, 'src'))
 
 # Import dynamically for better error handling
+logger = logging.getLogger(__name__)
+
 try:
     import cdio
-    print("[SENSOR_MONITOR] cdio module imported successfully")
+    logger.info("cdio module imported successfully")
 except ImportError as e:
-    print(f"[SENSOR_MONITOR] Warning: Failed to import cdio module: {e}")
+    logger.warning(f"Failed to import cdio module: {e}")
     cdio = None
 
 
@@ -43,6 +46,7 @@ class SensorStatusTracker:
         self.last_update_time = time.time()
         self.sensor_a_state = False
         self.sensor_b_state = False
+        self.clear_requested = False  # Flag to indicate clearing was requested
         self._lock = threading.Lock()
         
     def update_sensor_states(self, sensor_a: bool, sensor_b: bool):
@@ -58,8 +62,11 @@ class SensorStatusTracker:
             self.current_state = state
             if result is not None:
                 self.last_result = result
+                # Set clear flag if CLEAR_RESULTS was sent
+                if result == "CLEAR_RESULTS":
+                    self.clear_requested = True
             self.last_update_time = time.time()
-            print(f"[STATUS_TRACKER] State updated: {state}, Result: {result}")
+            logger.debug(f"Status updated: state={state}, result={result}")
             
     def get_status(self) -> dict:
         """Get current status for frontend"""
@@ -69,8 +76,14 @@ class SensorStatusTracker:
                 "last_result": self.last_result,
                 "sensor_a": self.sensor_a_state,
                 "sensor_b": self.sensor_b_state,
-                "last_update_time": self.last_update_time
+                "last_update_time": self.last_update_time,
+                "clear_requested": self.clear_requested
             }
+    
+    def clear_requested_flag(self):
+        """Clear the clear_requested flag after processing"""
+        with self._lock:
+            self.clear_requested = False
 
 
 class SensorSimulator:
@@ -93,18 +106,18 @@ class SensorSimulator:
         # Send initial state
         if self._callback:
             self._callback(self.sensor_a_state, self.sensor_b_state)
-        print("[SIMULATOR] Manual sensor control started")
+        logger.info("Simulator manual sensor control started")
         
     def stop_simulation(self):
         """Stop sensor simulation"""
         self._running = False
-        print("[SIMULATOR] Manual sensor control stopped")
+        logger.info("Simulator manual sensor control stopped")
         
     def toggle_sensor_a(self) -> bool:
         """Toggle sensor A state manually and return new state"""
         with self._lock:
             self.sensor_a_state = not self.sensor_a_state
-            print(f"[SIMULATOR] Sensor A manually toggled to: {self.sensor_a_state}")
+            logger.debug(f"Simulator sensor A toggled to: {self.sensor_a_state}")
             if self._callback and self._running:
                 self._callback(self.sensor_a_state, self.sensor_b_state)
             return self.sensor_a_state
@@ -113,14 +126,14 @@ class SensorSimulator:
         """Toggle sensor B state manually and return new state"""
         with self._lock:
             self.sensor_b_state = not self.sensor_b_state
-            print(f"[SIMULATOR] Sensor B manually toggled to: {self.sensor_b_state}")
+            logger.debug(f"Simulator sensor B toggled to: {self.sensor_b_state}")
             if self._callback and self._running:
                 self._callback(self.sensor_a_state, self.sensor_b_state)
             return self.sensor_b_state
         
     def trigger_left_to_right_pass(self):
         """Simulate a left-to-right object pass (should trigger SAVE)"""
-        print("[SIMULATOR] Simulating left-to-right pass...")
+        logger.debug("Simulator left-to-right pass")
         threading.Thread(target=self._simulate_pass_sequence, daemon=True).start()
         
     def _simulate_pass_sequence(self):
@@ -193,7 +206,7 @@ class SensorMonitor:
         self.dio_connected = False
         self.dio_id = None
         
-        print(f"[SENSOR_MONITOR] Initialized in {'simulation' if simulation_mode else 'real'} mode")
+        logger.info(f"Initialized SensorMonitor in {'simulation' if simulation_mode else 'real'} mode")
         
     def start_monitoring(self, on_decision: Callable[[Optional[str], str], None]):
         """
@@ -203,7 +216,7 @@ class SensorMonitor:
             on_decision: Callback function for sensor decisions (camera system)
         """
         if self.running:
-            print("[SENSOR_MONITOR] Already running")
+            logger.warning("SensorMonitor already running")
             return
             
         # Create combined callback that updates both status tracker and camera system
@@ -228,7 +241,7 @@ class SensorMonitor:
         self.monitoring_thread = threading.Thread(target=self._monitor_sensors, daemon=True)
         self.monitoring_thread.start()
         
-        print("[SENSOR_MONITOR] Monitoring started")
+        logger.info("Monitoring started")
         
     def stop_monitoring(self):
         """Stop sensor monitoring"""
@@ -240,21 +253,21 @@ class SensorMonitor:
         if self.monitoring_thread:
             self.monitoring_thread.join()
             
-        print("[SENSOR_MONITOR] Monitoring stopped")
+        logger.info("Monitoring stopped")
         
     def trigger_test_sequence(self):
         """Trigger a test sequence (simulation mode only)"""
         if self.simulation_mode and self.simulator:
             self.simulator.trigger_left_to_right_pass()
         else:
-            print("[SENSOR_MONITOR] Test sequence only available in simulation mode")
+            logger.warning("Test sequence only available in simulation mode")
             
     def toggle_sensor_a(self) -> bool:
         """Toggle sensor A state manually (simulation mode only)"""
         if self.simulation_mode and self.simulator:
             return self.simulator.toggle_sensor_a()
         else:
-            print("[SENSOR_MONITOR] Manual control only available in simulation mode")
+            logger.warning("Manual control only available in simulation mode")
             return False
             
     def toggle_sensor_b(self) -> bool:
@@ -262,7 +275,7 @@ class SensorMonitor:
         if self.simulation_mode and self.simulator:
             return self.simulator.toggle_sensor_b()
         else:
-            print("[SENSOR_MONITOR] Manual control only available in simulation mode")
+            logger.warning("Manual control only available in simulation mode")
             return False
             
     def get_sensor_states(self) -> tuple[bool, bool]:
@@ -287,12 +300,13 @@ class SensorMonitor:
             "sensor_a": sensor_a,
             "sensor_b": sensor_b,
             "last_update_time": status["last_update_time"],
-            "simulation_mode": self.simulation_mode
+            "simulation_mode": self.simulation_mode,
+            "clear_requested": status.get("clear_requested", False)
         }
         
     def _on_sensor_change(self, sensor_a: bool, sensor_b: bool):
         """Handle sensor state changes"""
-        print(f"[SENSOR_MONITOR] Sensor change: A={sensor_a}, B={sensor_b} (prev: A={self.prev_sensor_a}, B={self.prev_sensor_b})")
+        logger.debug(f"Sensor change: A={sensor_a}, B={sensor_b} (prev: A={self.prev_sensor_a}, B={self.prev_sensor_b})")
         
         # Update status tracker with current sensor states
         self.status_tracker.update_sensor_states(sensor_a, sensor_b)
@@ -300,18 +314,18 @@ class SensorMonitor:
         # Detect edges and send events to state machine
         if sensor_a != self.prev_sensor_a:
             event = SensorEvent.A_ON if sensor_a else SensorEvent.A_OFF
-            print(f"[SENSOR_MONITOR] Sensor A edge detected: {event}")
+            logger.debug(f"Sensor A edge: {event}")
             if self.state_machine:
                 result = self.state_machine.on_event(event)
-                print(f"[SENSOR_MONITOR] State machine result for A event: {result}")
+                logger.debug(f"State machine result for A event: {result}")
             self.prev_sensor_a = sensor_a
             
         if sensor_b != self.prev_sensor_b:
             event = SensorEvent.B_ON if sensor_b else SensorEvent.B_OFF
-            print(f"[SENSOR_MONITOR] Sensor B edge detected: {event}")
+            logger.debug(f"Sensor B edge: {event}")
             if self.state_machine:
                 result = self.state_machine.on_event(event)
-                print(f"[SENSOR_MONITOR] State machine result for B event: {result}")
+                logger.debug(f"State machine result for B event: {result}")
             self.prev_sensor_b = sensor_b
             
     def _monitor_sensors(self):
@@ -328,26 +342,26 @@ class SensorMonitor:
     def _initialize_real_sensors(self):
         """Initialize real sensor hardware (DIO/SiO)"""
         if cdio is None:
-            print("[SENSOR_MONITOR] cdio module not available, falling back to simulation mode")
+            logger.warning("cdio module not available, falling back to simulation mode")
             self.simulation_mode = True
             self.simulator = SensorSimulator()
             return
             
         try:
-            print("[SENSOR_MONITOR] Attempting to initialize real sensors...")
+            logger.info("Attempting to initialize real sensors")
             
-            # First, try to load settings from OiN config
-            config_file = os.path.join(OIN_DIR, 'config', 'DIO_setting.yaml')
-            dev_name = "DIO001"  # Default name
+            # First, try to load settings from project config
+            from __init__ import DIO_CONFIG_FILE
+            dev_name = "DIO000"  # Default name
             
             try:
                 import yaml
-                with open(file=config_file, mode='r', encoding='utf-8') as file:
+                with open(file=DIO_CONFIG_FILE, mode='r', encoding='utf-8') as file:
                     DIO_params = yaml.safe_load(file)
                     dev_name = DIO_params.get('dev_name', dev_name)
-                print(f"[SENSOR_MONITOR] Using device name from config: {dev_name}")
+                logger.info(f"Using device name from config: {dev_name}")
             except Exception as e:
-                print(f"[SENSOR_MONITOR] Failed to load config file, using default device name: {e}")
+                logger.warning(f"Failed to load DIO config, using default device name: {e}")
             
             # Initialize DIO device
             import ctypes
@@ -355,37 +369,35 @@ class SensorMonitor:
             err_str = ctypes.create_string_buffer(256)
             
             # Try to initialize with specified device name
-            print(f"[SENSOR_MONITOR] Initializing DIO with device name: {dev_name}")
+            logger.info(f"Initializing DIO with device name: {dev_name}")
             lret = cdio.DioInit(dev_name.encode(), ctypes.byref(self.dio_id))
             
             if lret != 0:  # DIO_ERR_SUCCESS
-                print(f"[SENSOR_MONITOR] Failed to initialize with {dev_name}, trying default")
-                default_name = "DIO001"
+                logger.warning(f"Failed to initialize with {dev_name}, trying default")
+                default_name = "DIO000"
                 lret = cdio.DioInit(default_name.encode(), ctypes.byref(self.dio_id))
                 
             if lret != 0:  # DIO_ERR_SUCCESS
                 cdio.DioGetErrorString(lret, err_str)
                 error_msg = err_str.value.decode('sjis') if hasattr(err_str.value, 'decode') else str(err_str.value)
-                print(f"[SENSOR_MONITOR] DioInit error: {lret}, {error_msg}")
-                print("[SENSOR_MONITOR] Failed to initialize DIO, falling back to simulation mode")
+                logger.error(f"DioInit error: {lret}, {error_msg}")
+                logger.error("Failed to initialize DIO, falling back to simulation mode")
                 self.simulation_mode = True
                 self.simulator = SensorSimulator()
             else:
-                print(f"[SENSOR_MONITOR] Successfully initialized DIO device, ID: {self.dio_id.value}")
+                logger.info(f"Successfully initialized DIO device, ID: {self.dio_id.value}")
                 self.dio_connected = True
                 
         except Exception as e:
-            print(f"[SENSOR_MONITOR] Failed to initialize real sensors: {e}")
-            import traceback
-            traceback.print_exc()
-            print("[SENSOR_MONITOR] Falling back to simulation mode")
+            logger.exception(f"Failed to initialize real sensors: {e}")
+            logger.warning("Falling back to simulation mode")
             self.simulation_mode = True
             self.simulator = SensorSimulator()
             
     def _read_real_sensors(self) -> tuple[bool, bool]:
         """Read real sensor states"""
         if not self.dio_connected or cdio is None:
-            print("[SENSOR_MONITOR] DIO not connected, cannot read sensors")
+            logger.warning("DIO not connected, cannot read sensors")
             return None, None
             
         try:
@@ -409,14 +421,12 @@ class SensorMonitor:
                 err_str = ctypes.create_string_buffer(256)
                 if lret_a != 0:
                     cdio.DioGetErrorString(lret_a, err_str)
-                    print(f"[SENSOR_MONITOR] Error reading sensor A: {err_str.value.decode('sjis')}")
+                    logger.error(f"Error reading sensor A: {err_str.value.decode('sjis')}")
                 if lret_b != 0:
                     cdio.DioGetErrorString(lret_b, err_str)
-                    print(f"[SENSOR_MONITOR] Error reading sensor B: {err_str.value.decode('sjis')}")
+                    logger.error(f"Error reading sensor B: {err_str.value.decode('sjis')}")
                 return None, None
                 
         except Exception as e:
-            print(f"[SENSOR_MONITOR] Error reading sensors: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"Error reading sensors: {e}")
             return None, None 

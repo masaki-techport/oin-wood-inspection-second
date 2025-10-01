@@ -2,7 +2,7 @@
 Streaming endpoints for the wood inspection system
 """
 from fastapi import APIRouter, HTTPException, Query, Depends, File, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from typing import Optional, List
 from datetime import date
 import os
@@ -12,6 +12,7 @@ from streaming.sensor_sse import create_sensor_sse_response, sensor_broadcaster
 from streaming.file_stream import create_file_stream_response, file_stream_service
 from streaming.inspection_stream import inspection_streamer
 from streaming.analysis_stream import analysis_streamer
+from services import memory_image_cache
 
 router = APIRouter(prefix="/api/stream", tags=["streaming"])
 
@@ -112,7 +113,7 @@ async def stream_file(
     try:
         # This is a bit of a hack - we'll call the original function to resolve the path
         # but catch any FileResponse and extract the path
-        original_response = await get_file(path, convert)
+        original_response = await get_file(path, convert, None)  # allow presentation cache without inspection_id
         
         # If it's a FileResponse, we can get the path
         if hasattr(original_response, 'path'):
@@ -128,6 +129,15 @@ async def stream_file(
     
     # Now stream the resolved file
     return create_file_stream_response(resolved_path, convert)
+
+
+@router.get("/memory-preview/{image_index}")
+async def get_memory_preview(image_index: int):
+    """Serve in-memory JPEG preview for presentation images without touching disk."""
+    data = memory_image_cache.get_preview(image_index)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Preview not found")
+    return Response(content=data, media_type="image/jpeg")
 
 
 @router.get("/file/info")
@@ -280,21 +290,22 @@ async def stream_multi_image_analysis(files: List[UploadFile] = File(...)):
 
 @router.post("/analysis/batch")
 async def stream_batch_analysis(
-    files: List[UploadFile] = File(...),
-    batch_size: int = Query(3, ge=1, le=10, description="Number of files to process per batch")
+    files: List[UploadFile] = File(...)
 ):
     """
-    Stream batch analysis results
+    Stream batch analysis results - processes all files without batch size limitation
     
     Args:
         files: List of image files to analyze
-        batch_size: Number of files to process in each batch
         
     Returns:
         Streaming JSON response with batch processing results
     """
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
+    
+    # Process all files in a single batch (no size limitation)
+    batch_size = len(files)
     
     return StreamingResponse(
         analysis_streamer.stream_batch_processing(files, batch_size),

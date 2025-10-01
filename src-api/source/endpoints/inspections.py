@@ -1,5 +1,6 @@
 import base64
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, WebSocket, HTTPException
+import logging
 from dependencies import get_session
 from db import Inspection
 from db import InspectionResult
@@ -18,7 +19,14 @@ from typing import List, Dict, Any, Optional
 from db import InspectionPresentation
 from __init__ import CONFIG_DIR
 
+
+class BulkDeleteRequest(BaseModel):
+    """Pydantic model for bulk delete request"""
+    inspection_ids: List[int]
+
+
 router = APIRouter(prefix="/inspections")
+logger = logging.getLogger(__name__)
 
 
 @router.get(
@@ -31,7 +39,9 @@ def get_last_inspection(
     try:
         # TODO: POLLINGではなくMYSQLに変更通知を任せるか検討
         with session:
-            latest_inspection = session.query(Inspection).order_by(Inspection.inspection_dt.desc()).first()
+            latest_inspection = session.query(Inspection).filter(
+                Inspection.status == True  # Only show active records
+            ).order_by(Inspection.inspection_dt.desc()).first()
             if latest_inspection == None:
                 return {"result": False, "message": "検査情報が存在しません。"}
     except Exception as ex:
@@ -56,7 +66,9 @@ async def websocket_endpoint(websocket: WebSocket, session=Depends(get_session))
     # 初期データを送信
     try:
         with session:
-            inspection = session.query(Inspection).order_by(Inspection.inspection_dt.desc()).first()
+            inspection = session.query(Inspection).filter(
+                Inspection.status == True  # Only show active records
+            ).order_by(Inspection.inspection_dt.desc()).first()
         if inspection:
             converted = jsonable_encoder(inspection, custom_encoder={
                 bytes: lambda o: base64.b64encode(o).decode()
@@ -195,10 +207,10 @@ def get_inspection_details(
         with session:
             inspection = session.query(InspectionDetails).filter(InspectionDetails.error_id == id).first()
             if inspection is None:
-                print("指定された検査情報が存在しません。")
+                logger.warning("指定された検査情報が存在しません。")
                 return  # None返すだけ
     except Exception as ex:
-        print(f"Failed!! {ex}")
+        logger.error(f"Failed!! {ex}")
         return
 
     # Encode bytes fields (例: 画像やバイナリデータがある場合)
@@ -234,11 +246,11 @@ def get_inspection_details_by_image(
             ).all()
             
             if not inspection_details:
-                print(f"指定された検査情報が存在しません。inspection_id: {inspection_id}, image_no: {image_no}")
+                logger.warning(f"指定された検査情報が存在しません。inspection_id: {inspection_id}, image_no: {image_no}")
                 return {"result": True, "message": "No inspection details found", "data": []}
                 
     except Exception as ex:
-        print(f"Failed!! {ex}")
+        logger.error(f"Failed!! {ex}")
         return {"result": False, "message": f"Failed to get inspection details: {ex}"}
 
     # Encode bytes fields for all inspection details
@@ -300,7 +312,8 @@ def get_history_by_date_like(
     try:
         with session:
             inspections = session.query(Inspection).filter(
-                func.date(Inspection.inspection_dt) == date_selected
+                func.date(Inspection.inspection_dt) == date_selected,
+                Inspection.status == True  # Only show active records
             ).all()
             
     except Exception as ex:
@@ -327,7 +340,9 @@ def get_all_inspections(
 ):
     try:
         with session:
-            query = session.query(Inspection).order_by(desc(Inspection.inspection_dt))
+            query = session.query(Inspection).filter(
+                Inspection.status == True  # Only show active records
+            ).order_by(desc(Inspection.inspection_dt))
             
             # Apply limit if provided
             if limit is not None:
@@ -362,7 +377,7 @@ async def get_presentation_images(inspection_id: int, session: Session = Depends
         if (cache_key in _presentation_cache and 
             cache_key in _cache_timestamps and 
             current_time - _cache_timestamps[cache_key] < 2):
-            print(f"Returning cached presentation images for inspection {inspection_id}")
+            logger.debug(f"Returning cached presentation images for inspection {inspection_id}")
             return _presentation_cache[cache_key]
         
         # Query the presentation images for the given inspection ID
@@ -371,9 +386,9 @@ async def get_presentation_images(inspection_id: int, session: Session = Depends
         ).all()
         
         # Debug: Print presentation images data
-        print(f"DEBUG: Found {len(presentation_images)} presentation images for inspection {inspection_id}")
+        logger.debug(f"Found {len(presentation_images)} presentation images for inspection {inspection_id}")
         for img in presentation_images:
-            print(f"  ID: {img.id}, Group: {img.group_name}, Path: {img.image_path}")
+            logger.debug(f"  ID: {img.id}, Group: {img.group_name}, Path: {img.image_path}")
             
         # Check for duplicates
         group_counts = {}
@@ -382,12 +397,12 @@ async def get_presentation_images(inspection_id: int, session: Session = Depends
         
         duplicate_groups = [group for group, count in group_counts.items() if count > 1]
         if duplicate_groups:
-            print(f"WARNING: Found duplicate groups: {duplicate_groups}")
+            logger.warning(f"Found duplicate groups: {duplicate_groups}")
             for group in duplicate_groups:
                 duplicates = [img for img in presentation_images if img.group_name == group]
-                print(f"  Group {group} duplicates:")
+                logger.debug(f"  Group {group} duplicates:")
                 for dup in duplicates:
-                    print(f"    ID: {dup.id}, Path: {dup.image_path}")
+                    logger.debug(f"    ID: {dup.id}, Path: {dup.image_path}")
         
         # If no presentation images found, return empty list
         if not presentation_images:
@@ -418,8 +433,42 @@ async def get_presentation_images(inspection_id: int, session: Session = Depends
         return result
         
     except Exception as e:
-        print(f"Error getting presentation images for inspection {inspection_id}: {str(e)}")
+        logger.exception(f"Error getting presentation images for inspection {inspection_id}: {str(e)}")
         return {"result": False, "message": f"Failed to get presentation images: {str(e)}"}
+
+@router.get("/{inspection_id}/images")
+async def get_inspection_images(inspection_id: int, session: Session = Depends(get_session)):
+    """
+    Get all images for the given inspection ID from t_inspection_images table
+    """
+    try:
+        from db.inspection_images import InspectionImage
+        
+        # Query the inspection images for the given inspection ID
+        inspection_images = session.query(InspectionImage).filter(
+            InspectionImage.inspection_id == inspection_id
+        ).order_by(InspectionImage.image_no).all()
+        
+        logger.debug(f"Found {len(inspection_images)} images for inspection {inspection_id}")
+        
+        # Convert to list of dictionaries for JSON response
+        images_data = [
+            {
+                "id": image.id,
+                "inspection_id": image.inspection_id,
+                "image_no": image.image_no,
+                "image_path": image.image_path,
+                "image_type": image.image_type,
+                "capture_timestamp": image.capture_timestamp.isoformat() if image.capture_timestamp else None,
+            }
+            for image in inspection_images
+        ]
+        
+        return {"result": True, "message": "Success", "data": images_data}
+        
+    except Exception as e:
+        logger.exception(f"Error getting images for inspection {inspection_id}: {str(e)}")
+        return {"result": False, "message": f"Failed to get images: {str(e)}"}
 
 @router.get("/latest-presentation-images")
 async def get_latest_presentation_images(session: Session = Depends(get_session)):
@@ -436,11 +485,13 @@ async def get_latest_presentation_images(session: Session = Depends(get_session)
         if (cache_key in _presentation_cache and 
             cache_key in _cache_timestamps and 
             current_time - _cache_timestamps[cache_key] < 1):
-            print("Returning cached latest presentation images")
+            logger.debug("Returning cached latest presentation images")
             return _presentation_cache[cache_key]
         
         # Get the latest inspection ID
-        latest_inspection = session.query(Inspection).order_by(desc(Inspection.inspection_dt)).first()
+        latest_inspection = session.query(Inspection).filter(
+            Inspection.status == True  # Only show active records
+        ).order_by(desc(Inspection.inspection_dt)).first()
         
         if not latest_inspection:
             result = {"result": False, "message": "No inspections found"}
@@ -490,8 +541,131 @@ async def get_latest_presentation_images(session: Session = Depends(get_session)
         return result
         
     except Exception as e:
-        print(f"Error getting latest presentation images: {str(e)}")
+        logger.exception(f"Error getting latest presentation images: {str(e)}")
         return {"result": False, "message": f"Failed to get latest presentation images: {str(e)}"}
+
+
+@router.delete("/bulk-delete")
+async def bulk_delete_inspections(
+    request: BulkDeleteRequest,
+    session: Session = Depends(get_session)
+):
+    """
+    Soft delete multiple inspection records by setting status = False (0)
+    and delete their associated image folders
+    """
+    try:
+        if not request.inspection_ids:
+            return {
+                "result": False,
+                "message": "No inspection IDs provided",
+                "data": {
+                    "deleted_count": 0,
+                    "failed_ids": [],
+                    "deleted_folders": []
+                }
+            }
+
+        deleted_count = 0
+        failed_ids = []
+        deleted_folders = []
+
+        with session:
+            for inspection_id in request.inspection_ids:
+                try:
+                    # Find the inspection record
+                    inspection = session.query(Inspection).filter(
+                        Inspection.inspection_id == inspection_id,
+                        Inspection.status == True  # Only delete active records
+                    ).first()
+                    
+                    if inspection:
+                        # Soft delete by setting status to False (0)
+                        inspection.status = False
+                        
+                        # Try to delete associated image folder if file_path exists
+                        if inspection.file_path:
+                            try:
+                                # Extract the specific inspection folder from file_path
+                                # file_path could be like "data/images/inspection-20250826_162023/image.jpg"
+                                # or just "data/images/inspection-20250826_162023/"
+                                
+                                # Normalize the path and get the directory
+                                normalized_path = os.path.normpath(inspection.file_path)
+                                
+                                # If file_path points to a file, get its directory
+                                # If file_path points to a directory, use it directly
+                                if os.path.splitext(normalized_path)[1]:  # Has file extension
+                                    folder_path = os.path.dirname(normalized_path)
+                                else:  # Is already a directory path
+                                    folder_path = normalized_path
+                                
+                                # Get absolute path
+                                BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+                                full_folder_path = os.path.join(BASE_DIR, folder_path)
+                                
+                                logger.debug(f"Inspection {inspection_id}: file_path='{inspection.file_path}', target_folder='{full_folder_path}'")
+                                
+                                # Safety check: ensure we're only deleting inspection-specific folders
+                                folder_name = os.path.basename(folder_path)
+                                parent_folder = os.path.basename(os.path.dirname(folder_path))
+                                
+                                # Check if this is a timestamp folder inside an 'inspection' directory
+                                is_timestamp_folder = len(folder_name) == 15 and folder_name.replace('_', '').isdigit()  # Format: YYYYMMDD_HHMMSS
+                                is_in_inspection_dir = parent_folder == 'inspection'
+                                
+                                if is_timestamp_folder and is_in_inspection_dir and os.path.exists(full_folder_path) and os.path.isdir(full_folder_path):
+                                    import shutil
+                                    # Additional safety: check that this folder contains only this inspection's files
+                                    shutil.rmtree(full_folder_path)
+                                    deleted_folders.append(folder_path)
+                                    logger.info(f"Successfully deleted inspection folder: {full_folder_path}")
+                                else:
+                                    logger.warning(
+                                        f"Skipped folder deletion for inspection {inspection_id}: folder={full_folder_path}, "
+                                        f"name='{folder_name}', parent='{parent_folder}', exists={os.path.exists(full_folder_path)}, "
+                                        f"is_dir={os.path.isdir(full_folder_path) if os.path.exists(full_folder_path) else False}"
+                                    )
+                                    
+                            except Exception as folder_error:
+                                logger.warning(f"Could not delete image folder for inspection {inspection_id}: {folder_error}")
+                                # Continue with soft delete even if folder deletion fails
+                        
+                        deleted_count += 1
+                        logger.info(f"Soft deleted inspection {inspection_id}")
+                        
+                    else:
+                        failed_ids.append(inspection_id)
+                        logger.info(f"Inspection {inspection_id} not found or already deleted")
+                        
+                except Exception as item_error:
+                    failed_ids.append(inspection_id)
+                    logger.exception(f"Error processing inspection {inspection_id}: {item_error}")
+            
+            # Commit all changes
+            session.commit()
+            
+        return {
+            "result": True,
+            "message": f"Successfully soft deleted {deleted_count} inspection(s)",
+            "data": {
+                "deleted_count": deleted_count,
+                "failed_ids": failed_ids,
+                "deleted_folders": deleted_folders
+            }
+        }
+        
+    except Exception as e:
+        logger.exception(f"Error in bulk delete: {e}")
+        return {
+            "result": False,
+            "message": f"Failed to delete inspections: {str(e)}",
+            "data": {
+                "deleted_count": 0,
+                "failed_ids": request.inspection_ids,
+                "deleted_folders": []
+            }
+        }
 
 
 @router.get("/settings")

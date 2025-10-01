@@ -3,6 +3,8 @@ import { useNotifications } from '@/components/ui/notifications';
 import { api } from '@/lib/api-client';
 import { SensorStatus, UseSensorMonitoringReturn, CameraType } from '../types';
 import { dispatchSaveEvent } from '../utils';
+import { inspectionSessionService } from '@/services';
+import { setInspectionId } from '../utils/stateManager';
 
 /**
  * Hook for monitoring and controlling sensors
@@ -12,6 +14,7 @@ import { dispatchSaveEvent } from '../utils';
 export const useSensorMonitoring = (selectedCameraType: CameraType): UseSensorMonitoringReturn => {
   const [aiThreshold, setAiThreshold] = useState(50);
   const [isUpdatingThreshold, setIsUpdatingThreshold] = useState(false);
+  const [isLoadingSettings, setIsLoadingSettings] = useState(true);
   const [sensorStatus, setSensorStatus] = useState<SensorStatus>({
     active: false,
     sensor_a: false,
@@ -47,6 +50,32 @@ export const useSensorMonitoring = (selectedCameraType: CameraType): UseSensorMo
 
   const { addNotification } = useNotifications();
 
+  // Load AI threshold from settings on component mount
+  useEffect(() => {
+    const loadInitialSettings = async () => {
+      try {
+        console.log('Loading AI threshold from settings...');
+        const response = await fetch('/api/settings/current');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.ai_threshold !== undefined) {
+            console.log(`Loaded AI threshold from settings: ${data.ai_threshold}`);
+            setAiThreshold(data.ai_threshold);
+          }
+        } else {
+          console.warn('Failed to load settings, using default AI threshold');
+        }
+      } catch (error) {
+        console.error('Error loading settings:', error);
+        // Keep default value of 50 if loading fails
+      } finally {
+        setIsLoadingSettings(false);
+      }
+    };
+
+    loadInitialSettings();
+  }, []); // Empty dependency array - only run on mount
+
   // Function to fetch inspection results from backend with retry mechanism
   const fetchInspectionResults = async (inspectionId: number, retryCount = 0) => {
     try {
@@ -66,7 +95,10 @@ export const useSensorMonitoring = (selectedCameraType: CameraType): UseSensorMo
       );
 
       // Use the endpoint that fetches from inspection_results table
-      const apiPromise = api.get(`/api/sensor-inspection/inspection-result/${inspectionId}`);
+      const apiPromise = api.get(`/sensor-inspection/inspection-result/${inspectionId}`, {
+        timeout: 10000,
+        suppressGlobalError: true // Suppress automatic error notifications for inspection results fetching
+      });
       const data = await Promise.race([apiPromise, timeoutPromise]) as any;
 
       if (data.status === 'success' && data.data) {
@@ -150,7 +182,7 @@ export const useSensorMonitoring = (selectedCameraType: CameraType): UseSensorMo
     setIsUpdatingThreshold(true);
     try {
       console.log(`Updating AI threshold on backend to ${newThreshold}%`);
-      const response = await api.post('/api/sensor-inspection/set-ai-threshold', {
+      const response = await api.post('/sensor-inspection/set-ai-threshold', {
         ai_threshold: newThreshold
       }) as any;
 
@@ -175,12 +207,37 @@ export const useSensorMonitoring = (selectedCameraType: CameraType): UseSensorMo
     }
   };
 
-  // Enhanced setAiThreshold that also updates the backend
-  const setAiThresholdWithBackend = (newThreshold: number) => {
+  // Enhanced setAiThreshold that also updates the backend and settings
+  const setAiThresholdWithBackend = async (newThreshold: number) => {
     setAiThreshold(newThreshold);
-    // Only update backend if sensor monitoring is active
+    
+    // Update both the sensor monitoring and the persistent settings
     if (sensorStatus.active) {
+      // Update the sensor monitoring threshold
       updateAiThresholdOnBackend(newThreshold);
+    }
+    
+    // Always update the persistent settings so the value is saved for next time
+    try {
+      console.log(`Saving AI threshold to settings: ${newThreshold}`);
+      const response = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          ai_threshold: newThreshold
+        })
+      });
+      
+      if (response.ok) {
+        console.log(`Successfully saved AI threshold ${newThreshold} to settings`);
+      } else {
+        console.warn('Failed to save AI threshold to settings, but value updated in UI');
+      }
+    } catch (error) {
+      console.error('Error saving AI threshold to settings:', error);
+      // Don't show error notification - the UI update still works
     }
   };
 
@@ -209,7 +266,10 @@ const pollSensorStatus = async () => {
     
     pollInProgress = true;
     try {
-      const data = await api.get('/api/sensor-inspection/status') as any;
+      const data = await api.get('/sensor-inspection/status', {
+        timeout: 8000, // Increased timeout for sensor polling
+        suppressGlobalError: true // Suppress automatic error notifications for polling
+      }) as any;
 
       // Debug logging
       // console.log('Polling sensor status:', {
@@ -243,6 +303,41 @@ const pollSensorStatus = async () => {
           if ((window as any).clearInspectionResults) {
             console.log('Clearing previous inspection results due to just_started flag');
             (window as any).clearInspectionResults();
+          }
+        }
+
+        // Check if we're starting a new inspection cycle (IDLE → B_ACTIVE)
+        if (data.sensors && data.sensors.clear_requested) {
+          // Clear inspection results for new cycle (UI-level)
+          if ((window as any).clearInspectionResults) {
+            (window as any).clearInspectionResults();
+          }
+          // Clear sensor-derived batch result/defect type (data-level)
+          if ((window as any).clearSensorData) {
+            (window as any).clearSensorData();
+          }
+          // Broadcast a DOM event so any listener (e.g., useSensorData instances) can clear synchronously
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('inspection:clear'));
+          }
+          // Immediately clear global mirror so components polling window.sensorStatus won't rehydrate old data
+          if (typeof window !== 'undefined' && (window as any).sensorStatus) {
+            const ws: any = (window as any).sensorStatus;
+            (window as any).sensorStatus = {
+              ...ws,
+              inspection_data: null,
+              inspection_results: null,
+              inspection_results_loading: false,
+              inspection_results_error: null
+            };
+          }
+          // Reset current inspection id to avoid re-fetching old DB result
+          setInspectionId(null);
+          // Clear the backend flag so this happens only once
+          try {
+            await api.post('/sensor-inspection/clear-flag');
+          } catch (error) {
+            console.warn('Failed to clear flag on backend:', error);
           }
         }
 
@@ -300,6 +395,25 @@ const pollSensorStatus = async () => {
         // Update sensor status
         // Check if relevant state has actually changed before updating
       const hasChanges = (prev: any) => {
+        // Check for clear_requested flag changes
+        if (prev.sensors?.clear_requested !== data.sensors?.clear_requested) {
+          return true;
+        }
+        
+        // If clearing is requested, don't check inspection data changes
+        if (data.sensors?.clear_requested) {
+          return (prev.sensor_a !== data.sensors.sensor_a ||
+                  prev.sensor_b !== data.sensors.sensor_b ||
+                  prev.current_state !== data.sensors.current_state ||
+                  prev.simulation_mode !== data.simulation_mode ||
+                  prev.sensors.sensor_a !== data.sensors.sensor_a ||
+                  prev.sensors.sensor_b !== data.sensors.sensor_b ||
+                  prev.sensors.current_state !== data.sensors.current_state ||
+                  prev.sensors.last_result !== data.sensors.last_result ||
+                  JSON.stringify(prev.capture_status) !== JSON.stringify(newCaptureStatus));
+        }
+        
+        // Normal change detection when not clearing
         if (prev.sensor_a !== data.sensors.sensor_a ||
             prev.sensor_b !== data.sensors.sensor_b ||
             prev.current_state !== data.sensors.current_state ||
@@ -309,10 +423,13 @@ const pollSensorStatus = async () => {
             prev.sensors.current_state !== data.sensors.current_state ||
             prev.sensors.last_result !== data.sensors.last_result ||
             JSON.stringify(prev.capture_status) !== JSON.stringify(newCaptureStatus) ||
+            // Consider clearing changes as well (null now but had previous data)
             (data.inspection_data && (!prev.inspection_data || 
               prev.inspection_data.inspection_id !== data.inspection_data.inspection_id)) ||
+            (!data.inspection_data && !!prev.inspection_data) ||
             (data.inspection_results && (!prev.inspection_results ||
-              prev.inspection_results.inspection_id !== data.inspection_results.inspection_id))) {
+              prev.inspection_results.inspection_id !== data.inspection_results.inspection_id)) ||
+            (!data.inspection_results && !!prev.inspection_results)) {
           return true;
         }
         return false;
@@ -335,11 +452,13 @@ const pollSensorStatus = async () => {
             sensor_a: data.sensors.sensor_a,
             sensor_b: data.sensors.sensor_b,
             current_state: data.sensors.current_state,
-            last_result: data.sensors.last_result
+            last_result: data.sensors.last_result,
+            clear_requested: data.sensors.clear_requested
           },
           capture_status: newCaptureStatus,
-          inspection_data: data.inspection_data || prev.inspection_data,
-          inspection_results: data.inspection_results || prev.inspection_results,
+          // Never carry over previous data across polls; if backend returns null, we keep it null
+          inspection_data: data.sensors.clear_requested ? null : data.inspection_data || null,
+          inspection_results: data.sensors.clear_requested ? null : data.inspection_results || null,
           inspection_results_loading: prev.inspection_results_loading,
           inspection_results_error: prev.inspection_results_error
         };
@@ -382,7 +501,7 @@ const pollSensorStatus = async () => {
 
   const triggerTestSequence = async () => {
     try {
-      const response = await api.post('/api/sensor-inspection/trigger-test') as any;
+      const response = await api.post('/sensor-inspection/trigger-test') as any;
       addNotification({
         type: 'info',
         title: 'テストシーケンス',
@@ -400,7 +519,7 @@ const pollSensorStatus = async () => {
 
   const toggleSensorA = async () => {
     try {
-      const response = await api.post('/api/sensor-inspection/toggle-sensor-a') as any;
+      const response = await api.post('/sensor-inspection/toggle-sensor-a') as any;
       addNotification({
         type: 'info',
         title: 'センサーA',
@@ -418,7 +537,7 @@ const pollSensorStatus = async () => {
 
   const toggleSensorB = async () => {
     try {
-      const response = await api.post('/api/sensor-inspection/toggle-sensor-b') as any;
+      const response = await api.post('/sensor-inspection/toggle-sensor-b') as any;
       addNotification({
         type: 'info',
         title: 'センサーB',
@@ -443,6 +562,27 @@ const pollSensorStatus = async () => {
         type: 'warning',
         title: 'AI閾値が範囲外です',
         message: 'AI閾値は10から100の間で設定してください'
+      });
+      return; // Don't proceed with starting
+    }
+
+    // Check if inspection is already running in another tab
+    if (inspectionSessionService.isSessionActiveInAnotherTab()) {
+      addNotification({
+        type: 'warning',
+        title: '検査プロセス実行中',
+        message: '別のタブですでに検査が実行されています。そのタブで検査を停止してから再試行してください。'
+      });
+      return; // Don't proceed with starting
+    }
+
+    // Start the inspection session in this tab
+    const sessionStarted = await inspectionSessionService.startSession();
+    if (!sessionStarted) {
+      addNotification({
+        type: 'warning',
+        title: '検査プロセス実行中',
+        message: '別のタブですでに検査が実行されています。そのタブで検査を停止してから再試行してください。'
       });
       return; // Don't proceed with starting
     }
@@ -473,7 +613,7 @@ const pollSensorStatus = async () => {
     // Start sensor monitoring with the CURRENTLY SELECTED camera type
     try {
       console.log(`Starting sensor inspection with camera type: ${selectedCameraType}, AI threshold: ${aiThreshold}`);
-      const response = await api.post('/api/sensor-inspection/start', {
+      const response = await api.post('/sensor-inspection/start', {
         camera_type: selectedCameraType,  // Use the currently selected camera type
         ai_threshold: aiThreshold         // Pass the AI threshold to the backend
       });
@@ -503,7 +643,7 @@ const pollSensorStatus = async () => {
         }));
 
         // Start polling sensor status more frequently
-        sensorStatusRef.current = setInterval(pollSensorStatus, 1000);  // Reduced from 500ms to 1000ms for fewer API calls
+        sensorStatusRef.current = setInterval(pollSensorStatus, 1000);  // Keep 1 second for sensor responsiveness
 
         // Show appropriate notification based on camera connection status
         if (cameraConnected) {
@@ -556,12 +696,16 @@ const pollSensorStatus = async () => {
   const handleStop = async () => {
     console.log('handleStop called');
 
+    // Determine the current in-flight inspection ID (if any) without consulting DB
+    const currentInspectionId = sensorStatus.inspection_data?.inspection_id || lastInspectionIdRef.current || null;
+    console.log('🔍 Stop: current in-flight inspection ID:', currentInspectionId);
+
     // First stop the backend API to prevent race conditions
     try {
       console.log('Stopping sensor monitoring via API');
 
       // Set timeout for API call
-      const stopPromise = api.post('/api/sensor-inspection/stop');
+      const stopPromise = api.post('/sensor-inspection/stop');
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Request timeout')), 5000)
       );
@@ -581,6 +725,9 @@ const pollSensorStatus = async () => {
         message
       });
     }
+
+    // Stop the inspection session
+    inspectionSessionService.stopSession();
 
     // Now update the UI state - this happens whether API call succeeds or fails
     console.log('Updating UI state to stopped');
@@ -602,8 +749,21 @@ const pollSensorStatus = async () => {
       sensorStatusRef.current = null;
     }
 
-    // Don't clear presentation images or inspection results - we want to keep showing them
-    // DO NOT reset the inspection result
+    // If there is an in-flight inspection, finish loading its data only
+    if (currentInspectionId) {
+      try {
+        // Notify presentation-images loader for this exact ID
+        dispatchSaveEvent(currentInspectionId);
+        // Fetch detailed results for this inspection
+        await fetchInspectionResults(currentInspectionId);
+        // Optionally load presentation images if the loader is available
+        if ((window as any).loadPresentationImages) {
+          await (window as any).loadPresentationImages(currentInspectionId);
+        }
+      } catch (e) {
+        console.warn('Post-stop finishing of current inspection encountered an issue:', e);
+      }
+    }
 
     // Add success notification
     addNotification({
@@ -629,8 +789,13 @@ const pollSensorStatus = async () => {
         clearInterval(sensorStatusRef.current);
         sensorStatusRef.current = null;
       }
+      
+      // Stop the inspection session when the component unmounts
+      if (sensorStatus.active) {
+        inspectionSessionService.stopSession();
+      }
     };
-  }, []);
+  }, [sensorStatus.active]);
 
   return {
     sensorStatus,

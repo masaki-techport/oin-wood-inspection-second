@@ -12,5 +12,4 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def initialize_database():
-    import models
     Base.metadata.create_all(engine)

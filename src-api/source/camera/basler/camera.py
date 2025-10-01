@@ -45,7 +45,7 @@ from .event_processor import EventProcessor
 from .image_processor import ImageProcessor
 from .hardware.camera_controller import CameraController
 from .analysis.image_analyzer import ImageAnalyzer
-from .analysis.presentation_processor import PresentationProcessor
+from .parallel.sequential_presentation_processor import SequentialPresentationProcessor
 
 # Configure logging
 logger = logging.getLogger('BaslerCamera')
@@ -79,7 +79,7 @@ class BaslerCamera(AbstractCamera):
         # Frame handling
         self.latest_frame = None
         self.latest_frame_timestamp = 0
-        self.mode = "snapshot"  # Default mode: "snapshot", "continuous", or "recording"
+        self.mode = "snapshot"  # Default mode: "snapshot", "continuous", "recording", or "sensor_triggered"
         
         # Buffer for recording - using deque like the original file
         self.buffer_fps = buffer_fps
@@ -99,6 +99,15 @@ class BaslerCamera(AbstractCamera):
         
         # Background threads
         self.background_threads = []
+        
+        # Timing collector for performance monitoring
+        try:
+            from .timing import TimingCollector
+            self.timing_collector = TimingCollector()
+            logger.info("Timing collector initialized")
+        except ImportError as e:
+            logger.warning(f"Could not import timing collector: {e}")
+            self.timing_collector = None
         
         # Image converter for Bayer pattern
         self.converter = pylon.ImageFormatConverter() if PYLON_AVAILABLE else None
@@ -129,6 +138,47 @@ class BaslerCamera(AbstractCamera):
         # AI threshold (percentage, 10-100)
         self.ai_threshold = 50
         
+        # Initialize settings service integration
+        try:
+            from services.settings_service import get_settings_service, ParameterSubscriber
+            
+            # Create parameter subscriber to receive settings updates
+            class CameraParameterSubscriber(ParameterSubscriber):
+                def __init__(self, camera_instance):
+                    self.camera = camera_instance
+                    
+                def on_parameter_updated(self, parameter_name: str, old_value: Any, new_value: Any) -> bool:
+                    """Handle parameter updates from settings service"""
+                    try:
+                        if parameter_name == 'ai_threshold':
+                            self.camera.set_ai_threshold(new_value)
+                            logger.debug(f"Camera AI threshold updated from {old_value} to {new_value}")
+                        elif parameter_name == 'length_threshold':
+                            # Length threshold is handled by analysis components
+                            logger.debug(f"Length threshold updated from {old_value} to {new_value}")
+                        return True
+                    except Exception as e:
+                        logger.error(f"Error updating camera parameter {parameter_name}: {e}")
+                        return False
+            
+            self.settings_service = get_settings_service()
+            self.parameter_subscriber = CameraParameterSubscriber(self)
+            self.settings_service.subscribe(self.parameter_subscriber)
+            
+            # Initialize AI threshold from settings
+            try:
+                current_ai_threshold = self.settings_service.get_ai_threshold()
+                if current_ai_threshold != self.ai_threshold:
+                    self.ai_threshold = current_ai_threshold
+                    logger.debug(f"Initialized AI threshold from settings: {current_ai_threshold}")
+            except Exception as e:
+                logger.warning(f"Could not load AI threshold from settings: {e}")
+                
+        except ImportError:
+            logger.warning("Settings service not available, using default thresholds")
+            self.settings_service = None
+            self.parameter_subscriber = None
+        
         # Store last inspection results for API retrieval
         self.last_inspection_results = None
         
@@ -146,7 +196,15 @@ class BaslerCamera(AbstractCamera):
         self.image_processor = ImageProcessor()
         self.camera_controller = CameraController(self)
         self.image_analyzer = ImageAnalyzer(self)
-        self.presentation_processor = PresentationProcessor(self)
+        self.presentation_processor = SequentialPresentationProcessor(self)
+        
+        # Memory analysis status - force enable
+        self.memory_analysis_enabled = getattr(self.buffer_manager, 'memory_analysis_enabled', False)
+        
+        # Ensure memory analysis is enabled
+        if not self.memory_analysis_enabled:
+            logger.info("Forcing memory analysis enablement...")
+            self.enable_memory_analysis()
 
         # Initialize parallel processing manager
         try:
@@ -158,6 +216,52 @@ class BaslerCamera(AbstractCamera):
             self.parallel_processor = None
 
         logger.info("BaslerCamera initialized successfully")
+    
+    def enable_memory_analysis(self) -> None:
+        """Enable memory analysis."""
+        try:
+            self.memory_analysis_enabled = True
+            if hasattr(self.buffer_manager, 'enable_memory_analysis'):
+                self.buffer_manager.enable_memory_analysis()
+            logger.info("Memory analysis enabled")
+        except Exception as e:
+            logger.error(f"Error enabling memory analysis: {e}")
+    
+    def disable_memory_analysis(self) -> None:
+        """Disable memory analysis."""
+        try:
+            self.memory_analysis_enabled = False
+            if hasattr(self.buffer_manager, 'disable_memory_analysis'):
+                self.buffer_manager.disable_memory_analysis()
+            logger.info("Memory analysis disabled")
+        except Exception as e:
+            logger.error(f"Error disabling memory analysis: {e}")
+    
+    def get_memory_analysis_stats(self) -> Dict[str, Any]:
+        """Get memory analysis statistics."""
+        if not self.memory_analysis_enabled:
+            return {"enabled": False}
+        
+        try:
+            if hasattr(self.buffer_manager, 'get_analysis_stats'):
+                return self.buffer_manager.get_analysis_stats()
+            return {"enabled": True, "error": "Analysis stats not available"}
+        except Exception as e:
+            logger.error(f"Error getting memory analysis stats: {e}")
+            return {"enabled": True, "error": str(e)}
+    
+    def get_analysis_result(self, image_index: int) -> Optional[Any]:
+        """Get analysis result for specific image."""
+        if not self.memory_analysis_enabled:
+            return None
+        
+        try:
+            if hasattr(self.buffer_manager, 'get_analysis_result'):
+                return self.buffer_manager.get_analysis_result(image_index)
+            return None
+        except Exception as e:
+            logger.error(f"Error getting analysis result: {e}")
+            return None
         
     def test_camera_detection(self) -> Dict[str, Any]:
         """
@@ -273,10 +377,10 @@ class BaslerCamera(AbstractCamera):
         Set camera mode
         
         Args:
-            mode: Camera mode ("snapshot", "continuous", or "recording")
+            mode: Camera mode ("snapshot", "continuous", "recording", or "sensor_triggered")
         """
-        if mode not in ["snapshot", "continuous", "recording"]:
-            raise ValueError("Mode must be 'snapshot', 'continuous', or 'recording'")
+        if mode not in ["snapshot", "continuous", "recording", "sensor_triggered"]:
+            raise ValueError("Mode must be 'snapshot', 'continuous', 'recording', or 'sensor_triggered'")
             
         # If we're already in this mode, do nothing
         if self.mode == mode:
@@ -297,6 +401,42 @@ class BaslerCamera(AbstractCamera):
             
         if mode == "recording":
             self.buffer_manager.start_recording()
+            
+        # For sensor_triggered mode, don't start anything yet - wait for sensor trigger
+        if mode == "sensor_triggered":
+            logger.info("Camera prepared for sensor-triggered mode - waiting for sensor triggers")
+    
+    def start_sensor_triggered_capture(self) -> bool:
+        """
+        Start capturing when sensor detects PASS_L_TO_R
+        
+        Returns:
+            bool: True if capturing started successfully, False otherwise
+        """
+        if self.mode != "sensor_triggered":
+            logger.warning(f"Cannot start sensor-triggered capture - camera is in {self.mode} mode")
+            return False
+            
+        try:
+            logger.info("Starting sensor-triggered capture")
+            
+            # Start grabbing
+            if not self.start_grabbing():
+                logger.error("Failed to start grabbing for sensor-triggered capture")
+                return False
+                
+            # Start recording
+            if hasattr(self.buffer_manager, 'start_recording'):
+                self.buffer_manager.start_recording()
+                logger.info("Sensor-triggered capture started successfully")
+                return True
+            else:
+                logger.error("Buffer manager does not have start_recording method")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error starting sensor-triggered capture: {e}")
+            return False
             
     def get_frame(self) -> Dict[str, Any]:
         """Get the latest frame from the camera"""
@@ -418,6 +558,79 @@ class BaslerCamera(AbstractCamera):
         inference_threshold = threshold / 100.0
         self.inference_service.update_threshold(inference_threshold)
         logger.info(f"Updated inference service threshold to {inference_threshold}")
+    
+    def get_current_length_threshold(self) -> float:
+        """
+        Get current length threshold from settings service
+        
+        Returns:
+            Current length threshold value
+        """
+        try:
+            if self.settings_service:
+                return self.settings_service.get_length_threshold()
+            else:
+                return 10.0  # Default fallback
+        except Exception as e:
+            logger.warning(f"Error getting length threshold: {e}")
+            return 10.0  # Default fallback
+    
+    def get_current_ai_threshold(self) -> int:
+        """
+        Get current AI threshold from settings service
+        
+        Returns:
+            Current AI threshold value
+        """
+        try:
+            if self.settings_service:
+                return self.settings_service.get_ai_threshold()
+            else:
+                return self.ai_threshold  # Use instance value as fallback
+        except Exception as e:
+            logger.warning(f"Error getting AI threshold: {e}")
+            return self.ai_threshold  # Use instance value as fallback
+    
+    def update_length_threshold(self, threshold: float) -> bool:
+        """
+        Update length threshold via settings service
+        
+        Args:
+            threshold: New length threshold value
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if self.settings_service:
+                return self.settings_service.update_length_threshold(threshold)
+            else:
+                logger.warning("Settings service not available")
+                return False
+        except Exception as e:
+            logger.error(f"Error updating length threshold: {e}")
+            return False
+    
+    def update_ai_threshold_via_settings(self, threshold: int) -> bool:
+        """
+        Update AI threshold via settings service (will trigger parameter update)
+        
+        Args:
+            threshold: New AI threshold value
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if self.settings_service:
+                return self.settings_service.update_ai_threshold(threshold)
+            else:
+                # Fallback to direct update
+                self.set_ai_threshold(threshold)
+                return True
+        except Exception as e:
+            logger.error(f"Error updating AI threshold via settings: {e}")
+            return False
 
     def set_params(self, params: dict) -> None:
         """
@@ -605,8 +818,22 @@ class BaslerCamera(AbstractCamera):
             "last_save_message": self.save_message,
             "processing_active": False,  # BaslerCamera doesn't track this separately
             "sensors_active": False,     # BaslerCamera doesn't track this separately
-            "inspection_just_started": self.inspection_just_started  # Include flag for frontend to know we just started
+            "inspection_just_started": self.inspection_just_started,  # Include flag for frontend to know we just started
+            "memory_analysis_enabled": self.memory_analysis_enabled
         }
+        
+        # Add memory analysis status if enabled
+        if self.memory_analysis_enabled:
+            try:
+                memory_stats = self.get_memory_analysis_stats()
+                memory_stats['status'] = 'ACTIVE'
+                memory_stats['real_time_analysis'] = True
+                status_dict['memory_analysis'] = memory_stats
+            except Exception as e:
+                logger.error(f"Error getting memory analysis status: {e}")
+                status_dict['memory_analysis'] = {"enabled": True, "status": "ERROR", "error": str(e)}
+        else:
+            status_dict['memory_analysis'] = {"enabled": False, "status": "DISABLED"}
         
         # Include last inspection results if available
         if self.last_inspection_results:
@@ -628,7 +855,7 @@ class BaslerCamera(AbstractCamera):
                 inspection_data["inspection_dt"] = self.last_inspection_results["inspection_dt"]
             
             status_dict["inspection_data"] = inspection_data
-            logger.info(f"Included inspection_id {self.last_inspection_results.get('inspection_id')} in status data with presentation_ready={inspection_data.get('presentation_ready', False)}")
+            logger.debug(f"Included inspection_id {self.last_inspection_results.get('inspection_id')} in status data with presentation_ready={inspection_data.get('presentation_ready', False)}")
         
         return status_dict
         

@@ -3,7 +3,8 @@ CREATE TABLE IF NOT EXISTS t_inspection_presentation (
     inspection_id INTEGER NOT NULL,
     group_name VARCHAR(1) NOT NULL,  -- 'A', 'B', 'C', 'D', or 'E'
     image_path VARCHAR(255),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_dt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
+    update_dt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
     CONSTRAINT fk_inspection_id 
         FOREIGN KEY (inspection_id)
         REFERENCES t_inspection (inspection_id)

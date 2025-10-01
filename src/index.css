@@ -2,6 +2,65 @@
 @tailwind components;
 @tailwind utilities;
 
+/* CSS Custom Properties for Responsive Design */
+:root {
+  /* Responsive spacing scale */
+  --spacing-xs: clamp(0.25rem, 0.5vw, 0.5rem);
+  --spacing-sm: clamp(0.5rem, 1vw, 1rem);
+  --spacing-md: clamp(1rem, 2vw, 2rem);
+  --spacing-lg: clamp(1.5rem, 3vw, 3rem);
+  --spacing-xl: clamp(2rem, 4vw, 4rem);
+  --spacing-2xl: clamp(3rem, 5vw, 5rem);
+
+  /* Responsive font sizes - optimized for headers */
+  --text-xs: clamp(0.75rem, 1.5vw, 0.875rem);
+  --text-sm: clamp(0.875rem, 1.8vw, 1rem);
+  --text-base: clamp(1rem, 2vw, 1.125rem);
+  --text-lg: clamp(1.125rem, 2.2vw, 1.25rem);
+  --text-xl: clamp(1.25rem, 2.5vw, 1.375rem);
+  --text-2xl: clamp(1.75rem, 3.5vw, 2rem);
+  --text-3xl: clamp(2rem, 4vw, 2.25rem);
+  --text-4xl: clamp(2.25rem, 4.5vw, 2.5rem);
+
+  /* Header-specific styling */
+  --header-primary-bg: #155f83;
+  --header-primary-text: #ffffff;
+  --header-logo-bg: #ffffff;
+  --header-logo-text: #155f83;
+  --header-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  --header-border: 1px solid rgba(255, 255, 255, 0.2);
+  --header-gradient: linear-gradient(135deg, #155f83 0%, #0f4c6b 100%);
+
+  /* Responsive container sizes */
+  --container-xs: min(90vw, 480px);
+  --container-sm: min(90vw, 640px);
+  --container-md: min(90vw, 768px);
+  --container-lg: min(90vw, 1024px);
+  --container-xl: min(95vw, 1280px);
+  --container-2xl: min(95vw, 1600px);
+
+  /* Image aspect ratios */
+  --aspect-square: 1;
+  --aspect-video: 16/9;
+  --aspect-photo: 4/3;
+  --aspect-presentation: 5/4;
+  --aspect-wood-inspection: 4/3; /* 4:3 ratio for wood inspection images */
+
+  /* Modal sizing */
+  --modal-width: min(95vw, 1600px);
+  --modal-height: min(85vh, 800px);
+  --modal-padding: var(--spacing-sm);
+
+  /* Presentation image sizing - Optimized for inspection view only */
+  --presentation-image-width: clamp(180px, 16vw, 240px);
+  --presentation-image-height: clamp(144px, 12.8vw, 192px);
+  --presentation-gap: clamp(0.5rem, 1.2vw, 1.2rem);
+
+  /* Grid image sizing */
+  --grid-image-size: clamp(60px, 8vw, 80px);
+  --grid-image-height: clamp(48px, 6vw, 64px);
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
@@ -14,4 +73,431 @@ body {
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
+}
+
+/* Responsive Utility Classes */
+@layer utilities {
+  /* Responsive containers */
+  .container-responsive {
+    width: 100%;
+    margin: 0 auto;
+    padding: var(--spacing-xs);
+  }
+  
+  /* Optimized container for inspection presentation - minimized padding for maximum space usage */
+  .container-responsive.inspection-presentation-container {
+    padding: var(--spacing-xs) var(--spacing-xs);
+    margin: 0;
+  }
+
+  /* Responsive spacing */
+  .spacing-xs { gap: var(--spacing-xs); }
+  .spacing-sm { gap: var(--spacing-sm); }
+  .spacing-md { gap: var(--spacing-md); }
+  .spacing-lg { gap: var(--spacing-lg); }
+  .spacing-xl { gap: var(--spacing-xl); }
+  .spacing-2xl { gap: var(--spacing-2xl); }
+
+  /* Responsive text sizes */
+  .text-responsive-xs { font-size: var(--text-xs); }
+  .text-responsive-sm { font-size: var(--text-sm); }
+  .text-responsive-base { font-size: var(--text-base); }
+  .text-responsive-lg { font-size: var(--text-lg); }
+  .text-responsive-xl { font-size: var(--text-xl); }
+  .text-responsive-2xl { font-size: var(--text-2xl); }
+  .text-responsive-3xl { font-size: var(--text-3xl); }
+  .text-responsive-4xl { font-size: var(--text-4xl); }
+
+  /* Standardized header utilities */
+  .header-primary {
+    background: var(--header-gradient);
+    color: var(--header-primary-text);
+    box-shadow: var(--header-shadow);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    height: auto;
+    min-height: 4rem; /* Increased to accommodate larger elements */
+  }
+
+  /* Logo image styling - remove white background while preserving colors */
+  .header-logo-image {
+    height: 3rem;
+    width: auto;
+    object-fit: contain;
+    margin-right: 0.75rem;
+    flex-shrink: 0;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
+    transition: all 0.2s ease-in-out;
+    /* Remove white background while preserving original colors */
+    background: transparent;
+    /* Use CSS mask or filter to remove white pixels specifically */
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1))
+            contrast(1.1)
+            saturate(1.1);
+  }
+
+  .header-logo-image:hover {
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15))
+            contrast(1.1)
+            saturate(1.1);
+    transform: translateY(-1px);
+  }
+
+  /* More effective approach to remove white background */
+  .header-logo-image-transparent {
+    height: 3rem;
+    width: auto;
+    object-fit: contain;
+    margin-right: 0.75rem;
+    flex-shrink: 0;
+    transition: all 0.2s ease-in-out;
+    /* Create a mask effect to remove white pixels */
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
+    /* Use backdrop-filter or mix-blend-mode for better white removal */
+    mix-blend-mode: multiply;
+    opacity: 0.95;
+  }
+
+  /* If the logo has a specific color scheme, we can enhance it */
+  .header-logo-enhanced {
+    height: 3rem;
+    width: auto;
+    object-fit: contain;
+    margin-right: 0.75rem;
+    flex-shrink: 0;
+    transition: all 0.2s ease-in-out;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1))
+            brightness(1.1)
+            contrast(1.2);
+    /* Remove white by making it transparent */
+    background: transparent;
+  }
+
+  .header-title {
+    font-weight: bold;
+    line-height: 1.1;
+    margin: 0;
+    display: flex;
+    align-items: center;
+  }
+
+  .header-subtitle {
+    font-size: var(--text-sm);
+    opacity: 0.9;
+    font-weight: normal;
+    line-height: 1.2;
+    margin: 0;
+  }
+
+  /* Responsive presentation images */
+  .presentation-image {
+    width: var(--presentation-image-width);
+    height: var(--presentation-image-height);
+    aspect-ratio: var(--aspect-presentation);
+  }
+
+  .presentation-grid {
+    display: flex;
+    justify-content: center;
+    flex-wrap: nowrap; /* Prevent wrapping to ensure single row */
+    gap: var(--presentation-gap);
+    width: 100%;
+    align-items: flex-start;
+    /* Ensure consistent spacing by limiting the container width - Updated for single row layout */
+    max-width: calc(5 * (var(--presentation-image-width) + var(--presentation-gap)) - var(--presentation-gap));
+    margin: 0 auto;
+    /* Add padding to ensure images don't touch screen edges */
+    padding: 0 var(--spacing-sm);
+    /* Enable horizontal scrolling if needed for very small screens */
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  /* Inspection view specific presentation grid - maximized for 1920x1080 */
+  .inspection-presentation-grid {
+    display: flex;
+    justify-content: center;
+    flex-wrap: nowrap;
+    gap: clamp(0.3rem, 0.8vw, 0.8rem);
+    width: 100%;
+    align-items: flex-start;
+    max-width: calc(5 * (clamp(360px, 28vw, 450px) + clamp(0.3rem, 0.8vw, 0.8rem)) - clamp(0.3rem, 0.8vw, 0.8rem));
+    margin: 0 auto;
+    padding: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  /* Inspection view specific presentation image sizing - maximized for 1920x1080 */
+  .inspection-presentation-image {
+    width: clamp(360px, 28vw, 450px);
+    min-height: clamp(200px, 15vw, 250px);
+    max-height: clamp(300px, 22vw, 350px);
+    /* Remove fixed aspect ratio to let content determine height */
+  }
+
+  /* Responsive grid images */
+  .grid-image {
+    width: var(--grid-image-size);
+    height: var(--grid-image-height);
+    aspect-ratio: var(--aspect-photo);
+  }
+
+  /* Presentation thumbnail styling - makes presentation images distinct in the grid */
+  .grid-image.presentation-thumbnail {
+    position: relative !important;
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4) !important;
+    border-width: 6px !important;
+    border-style: solid !important;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%) !important;
+  }
+
+  .grid-image.presentation-thumbnail:hover {
+    transform: scale(1.08);
+    transition: transform 0.2s ease-in-out;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Responsive modal */
+  .modal-container {
+    width: var(--modal-width);
+    height: var(--modal-height);
+    max-height: 85vh;
+    overflow: hidden;
+  }
+
+  .modal-body {
+    padding: var(--modal-padding);
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex: 1;
+    min-height: 0;
+    scrollbar-width: thin;
+  }
+
+  .modal-body::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .modal-body::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+  }
+
+  .modal-body::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 3px;
+  }
+
+  .modal-body::-webkit-scrollbar-thumb:hover {
+    background: #555;
+  }
+
+  /* Prevent horizontal overflow in modal */
+  .modal-container * {
+    box-sizing: border-box;
+  }
+
+  /* Ensure presentation grid doesn't overflow but allows full width usage */
+  .presentation-grid {
+    max-width: 100%;
+  }
+
+  /* Responsive grid layouts */
+  .responsive-grid {
+    display: grid;
+    gap: var(--spacing-xs);
+    grid-template-columns: repeat(auto-fill, var(--grid-image-size));
+    justify-content: start;
+  }
+
+  /* Aspect ratio utilities */
+  .aspect-square { aspect-ratio: var(--aspect-square); }
+  .aspect-video { aspect-ratio: var(--aspect-video); }
+  .aspect-photo { aspect-ratio: var(--aspect-photo); }
+  .aspect-presentation { aspect-ratio: var(--aspect-presentation); }
+  .aspect-wood-inspection { aspect-ratio: var(--aspect-wood-inspection); }
+
+  /* Responsive flexbox utilities */
+  .flex-responsive {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: var(--spacing-md);
+  }
+
+  .flex-responsive-start {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    align-items: center;
+    gap: var(--spacing-md);
+  }
+
+  /* Responsive overflow handling */
+  .overflow-responsive {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+  }
+
+  .overflow-responsive::-webkit-scrollbar {
+    height: 6px;
+  }
+
+  .overflow-responsive::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+  }
+
+  .overflow-responsive::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 3px;
+  }
+
+  .overflow-responsive::-webkit-scrollbar-thumb:hover {
+    background: #555;
+  }
+}
+
+/* Large screen breakpoints for inspection presentation images */
+@media (min-width: 1200px) {
+  .inspection-presentation-image {
+    width: clamp(250px, 17vw, 290px);
+    height: clamp(188px, 12.8vw, 218px);
+  }
+  
+  .inspection-presentation-grid {
+    gap: clamp(0.5rem, 1.2vw, 1.2rem);
+    max-width: calc(5 * (clamp(250px, 17vw, 290px) + clamp(0.5rem, 1.2vw, 1.2rem)) - clamp(0.5rem, 1.2vw, 1.2rem));
+  }
+}
+
+@media (min-width: 1600px) {
+  .inspection-presentation-image {
+    width: clamp(280px, 18vw, 320px);
+    height: clamp(210px, 13.5vw, 240px);
+  }
+  
+  .inspection-presentation-grid {
+    gap: clamp(0.6rem, 1.4vw, 1.4rem);
+    max-width: calc(5 * (clamp(280px, 18vw, 320px) + clamp(0.6rem, 1.4vw, 1.4rem)) - clamp(0.6rem, 1.4vw, 1.4rem));
+  }
+}
+
+/* Media queries for small screens */
+@media (max-width: 1024px) {
+  :root {
+    --presentation-image-width: clamp(160px, 16vw, 200px);
+    --presentation-image-height: clamp(128px, 12.8vw, 160px);
+    --presentation-gap: clamp(0.3rem, 1vw, 0.8rem);
+  }
+  
+  .presentation-grid {
+    padding: 0 var(--spacing-xs);
+  }
+  
+  .inspection-presentation-image {
+    width: clamp(190px, 15.5vw, 230px);
+    height: clamp(143px, 11.6vw, 173px);
+  }
+}
+
+/* Media queries for very small screens */
+@media (max-width: 768px) {
+  :root {
+    --presentation-image-width: clamp(140px, 19vw, 180px);
+    --presentation-image-height: clamp(112px, 15.2vw, 144px);
+    --presentation-gap: clamp(0.3rem, 1vw, 0.8rem);
+  }
+  
+  .container-responsive {
+    padding: var(--spacing-xs);
+  }
+  
+  .inspection-presentation-image {
+    width: clamp(150px, 16vw, 185px);
+    height: clamp(113px, 12vw, 139px);
+  }
+
+  /* Responsive text scaling */
+  .text-scale-responsive {
+    font-size: clamp(0.875rem, 2.5vw, 1.125rem);
+    line-height: 1.4;
+  }
+
+  /* Responsive button sizing */
+  .btn-responsive {
+    padding: clamp(0.5rem, 1.5vw, 1rem) clamp(1rem, 3vw, 2rem);
+    font-size: var(--text-base);
+    border-radius: clamp(0.25rem, 0.5vw, 0.5rem);
+  }
+
+  /* Responsive modal adjustments */
+  /* Optimize for high-resolution displays like 1920x1080 - Ensure 5 images fit in one row */
+  @media (min-width: 1600px) {
+    :root {
+      --presentation-image-width: clamp(240px, 17vw, 280px);
+      --presentation-image-height: clamp(192px, 13.6vw, 224px);
+      --presentation-gap: clamp(1rem, 2vw, 2rem);
+    }
+  }
+
+  @media (max-width: 1024px) {
+    .presentation-grid {
+      max-width: calc(4 * (var(--presentation-image-width) + var(--presentation-gap)) - var(--presentation-gap));
+    }
+  }
+
+  @media (max-width: 768px) {
+    .modal-container {
+      width: 95vw;
+      height: 90vh;
+      max-height: 90vh;
+    }
+
+    .modal-body {
+      padding: var(--spacing-sm);
+    }
+
+    .presentation-grid {
+      gap: var(--spacing-sm);
+      max-width: calc(3 * (var(--presentation-image-width) + var(--spacing-sm)) - var(--spacing-sm));
+    }
+
+    :root {
+      --presentation-image-width: clamp(180px, 25vw, 220px);
+      --presentation-image-height: clamp(144px, 20vw, 176px);
+      --grid-image-size: clamp(50px, 10vw, 60px);
+      --grid-image-height: clamp(40px, 8vw, 48px);
+    }
+  }
+
+  @media (max-width: 480px) {
+    .modal-container {
+      width: 98vw;
+      height: 95vh;
+      max-height: 95vh;
+    }
+
+    .presentation-grid {
+      flex-direction: column;
+      align-items: center;
+      gap: var(--spacing-xs);
+      max-width: var(--presentation-image-width);
+    }
+
+    :root {
+      --presentation-image-width: clamp(140px, 70vw, 180px);
+      --presentation-image-height: clamp(112px, 56vw, 144px);
+    }
+  }
+}
+
+/* No Image Placeholder - Remove internal border, let parent handle border */
+.no-image-placeholder,
+.presentation-image .no-image-placeholder,
+.inspection-presentation-image .no-image-placeholder {
+  background-color: #f3f4f6 !important;
+  border: none !important;
 }

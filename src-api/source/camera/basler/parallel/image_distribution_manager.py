@@ -16,39 +16,100 @@ logger = logging.getLogger('BaslerCamera.ImageDistributionManager')
 class ImageDistributionManager:
     """
     Manages distribution of images across processing groups for parallel analysis.
-    
-    Implements round-robin distribution logic to split images into 5 groups (A-E)
-    with load balancing for uneven image counts.
+
+    Implements sequential range distribution logic to split images into 5 groups (A-E).
+    Images are first sorted by their image number (extracted from filename) to ensure
+    consistent grouping with frontend logic:
+    - Group A: images 0-4 (No_0000, No_0001, No_0002, No_0003, No_0004)
+    - Group B: images 5-9 (No_0005, No_0006, No_0007, No_0008, No_0009)
+    - Group C: images 10-14 (No_0010, No_0011, No_0012, No_0013, No_0014)
+    - Group D: images 15-19 (No_0015, No_0016, No_0017, No_0018, No_0019)
+    - Group E: images 20-24 (No_0020, No_0021, No_0022, No_0023, No_0024)
     """
     
     def __init__(self):
         """Initialize the image distribution manager."""
-        self.group_names = ['A', 'B', 'C', 'D', 'E']
-        self.distribution_strategy = 'round_robin'  # Can be extended to other strategies
+        # Remove hardcoded 5-group limitation - support unlimited groups for FIFO
+        self.max_groups = None  # No limit on number of groups
+        self.distribution_strategy = 'balanced'  # Use sequential range distribution
         
     def distribute_images(self, image_paths: List[str]) -> Dict[str, List[str]]:
         """
-        Distribute images across 5 groups (A-E) using round-robin logic.
-        
+        Distribute images across unlimited groups using sequential range distribution.
+
         Args:
             image_paths: List of image file paths to distribute
-            
+
         Returns:
             Dict[str, List[str]]: Dictionary mapping group names to image paths
         """
         if not image_paths:
             logger.warning("No images to distribute")
-            return {group: [] for group in self.group_names}
+            return {}
+
+        # Calculate optimal number of groups (one group per image for maximum FIFO granularity)
+        num_groups = len(image_paths)
+        logger.info(f"Distributing {len(image_paths)} images across {num_groups} groups using {self.distribution_strategy} strategy")
+
+        # Sort images by image number to ensure consistent grouping with frontend
+        sorted_image_paths = self._sort_images_by_number(image_paths)
         
-        logger.info(f"Distributing {len(image_paths)} images across {len(self.group_names)} groups")
-        
-        if self.distribution_strategy == 'round_robin':
-            return self._distribute_round_robin(image_paths)
+        if self.distribution_strategy == 'balanced':
+            return self._distribute_balanced(sorted_image_paths, num_groups)
+        elif self.distribution_strategy == 'round_robin':
+            return self._distribute_round_robin(sorted_image_paths, num_groups)
         else:
-            # Default to round-robin if unknown strategy
-            return self._distribute_round_robin(image_paths)
+            # Default to balanced (sequential range) distribution
+            return self._distribute_balanced(sorted_image_paths, num_groups)
     
-    def _distribute_round_robin(self, image_paths: List[str]) -> Dict[str, List[str]]:
+    def _sort_images_by_number(self, image_paths: List[str]) -> List[str]:
+        """
+        Sort images by their image number extracted from filename.
+        This ensures consistent grouping with frontend logic.
+        
+        Args:
+            image_paths: List of image file paths to sort
+            
+        Returns:
+            List[str]: Sorted image paths by image number
+        """
+        import re
+        
+        def extract_image_no(image_path: str) -> int:
+            """Extract image number from path using 'No_????' pattern."""
+            if not image_path:
+                return 0
+            
+            try:
+                # Look for "No_" followed by digits in the path
+                matches = re.findall(r'No_(\d+)', image_path)
+                if matches:
+                    # Use the last match in case there are multiple "No_" patterns
+                    image_no_str = matches[-1]
+                    return int(image_no_str)
+                else:
+                    logger.warning(f"Could not extract image_no from path: {image_path}")
+                    return 0
+            except Exception as e:
+                logger.error(f"Error extracting image_no from path {image_path}: {e}")
+                return 0
+        
+        # Create list of (image_path, image_no) tuples for sorting
+        image_data = [(path, extract_image_no(path)) for path in image_paths]
+        
+        # Sort by image number
+        image_data.sort(key=lambda x: x[1])
+        
+        # Extract sorted paths
+        sorted_paths = [item[0] for item in image_data]
+        
+        logger.debug(f"Sorted {len(sorted_paths)} images by image number")
+        for i, (path, image_no) in enumerate(image_data[:5]):  # Log first 5 for debugging
+            logger.debug(f"  {i}: image_no={image_no}, path={os.path.basename(path)}")
+        
+        return sorted_paths
+    
+    def _distribute_round_robin(self, image_paths: List[str], num_groups: int) -> Dict[str, List[str]]:
         """
         Distribute images using round-robin algorithm.
         
@@ -57,16 +118,21 @@ class ImageDistributionManager:
         
         Args:
             image_paths: List of image paths to distribute
+            num_groups: Number of groups to distribute across
             
         Returns:
             Dict[str, List[str]]: Distributed images by group
         """
-        distributed_images = {group: [] for group in self.group_names}
+        from utils.labeling import to_label
+        
+        # Generate group names using Excel-style labeling
+        group_names = [to_label(i + 1) for i in range(num_groups)]
+        distributed_images = {group: [] for group in group_names}
         
         # Round-robin distribution
         for i, image_path in enumerate(image_paths):
-            group_index = i % len(self.group_names)
-            group_name = self.group_names[group_index]
+            group_index = i % num_groups
+            group_name = group_names[group_index]
             distributed_images[group_name].append(image_path)
         
         # Log distribution results
@@ -77,26 +143,36 @@ class ImageDistributionManager:
         
         return distributed_images
     
-    def _distribute_balanced(self, image_paths: List[str]) -> Dict[str, List[str]]:
+    def _distribute_balanced(self, image_paths: List[str], num_groups: int) -> Dict[str, List[str]]:
         """
-        Alternative distribution strategy for perfectly balanced groups.
-        
-        This method ensures each group gets exactly the same number of images
-        (or as close as possible), which may be useful for certain scenarios.
-        
+        Sequential range distribution strategy for balanced groups.
+
+        This method distributes images in sequential ranges based on their sorted order:
+        - Group A gets the first N images (No_0000, No_0001, No_0002, No_0003, No_0004)
+        - Group B gets the next N images (No_0005, No_0006, No_0007, No_0008, No_0009)
+        - etc.
+
+        Each group gets exactly the same number of images (or as close as possible).
+        Images are expected to be pre-sorted by image number.
+
         Args:
-            image_paths: List of image paths to distribute
-            
+            image_paths: List of image paths to distribute (should be sorted by image number)
+            num_groups: Number of groups to distribute across
+
         Returns:
             Dict[str, List[str]]: Distributed images by group
         """
-        distributed_images = {group: [] for group in self.group_names}
+        from utils.labeling import to_label
         
-        images_per_group = len(image_paths) // len(self.group_names)
-        remainder = len(image_paths) % len(self.group_names)
+        # Generate group names using Excel-style labeling
+        group_names = [to_label(i + 1) for i in range(num_groups)]
+        distributed_images = {group: [] for group in group_names}
+        
+        images_per_group = len(image_paths) // num_groups
+        remainder = len(image_paths) % num_groups
         
         start_index = 0
-        for i, group_name in enumerate(self.group_names):
+        for i, group_name in enumerate(group_names):
             # Calculate how many images this group should get
             group_size = images_per_group + (1 if i < remainder else 0)
             end_index = start_index + group_size
@@ -152,14 +228,14 @@ class ImageDistributionManager:
         if total_images > 0:
             min_size = min(group_sizes.values())
             max_size = max(group_sizes.values())
-            avg_size = total_images / len(self.group_names)
+            avg_size = total_images / len(distributed_images)
             balance_ratio = min_size / max_size if max_size > 0 else 1.0
         else:
             min_size = max_size = avg_size = balance_ratio = 0
         
         return {
             'total_images': total_images,
-            'group_count': len(self.group_names),
+            'group_count': len(distributed_images),
             'group_sizes': group_sizes,
             'min_group_size': min_size,
             'max_group_size': max_size,

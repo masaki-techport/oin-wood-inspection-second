@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { getApiUrl } from '@/lib/api-client';
 
 interface Inspection {
   inspection_id: number;
@@ -52,7 +53,7 @@ export const ProgressiveInspectionList: React.FC<ProgressiveInspectionListProps>
       if (dateTo) params.append('date_to', dateTo);
 
       const response = await fetch(
-        `http://localhost:8000/api/stream/inspections?${params.toString()}`,
+        `${getApiUrl()}/api/stream/inspections?${params.toString()}`,
         { signal: abortControllerRef.current.signal }
       );
 

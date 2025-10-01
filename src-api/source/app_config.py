@@ -5,6 +5,7 @@ Handles loading and managing configuration from settings.ini
 
 import os
 import configparser
+import logging
 from typing import Dict, Any
 from __init__ import SOURCE_DIR, CONFIG_DIR, CONFIG_FILE_NAME, ROOT_DIR
 
@@ -29,15 +30,16 @@ class AppConfig:
         Load configuration from file, create with defaults if not exists
         """
         self.config_file_path = CONFIG_DIR + "/" + self.config_file
+        logger = logging.getLogger(__name__)
         if os.path.exists(self.config_file_path):
             try:
                 self.config.read(self.config_file_path)
-                print(f"[CONFIG] Loaded configuration from {self.config_file}")
+                logger.info(f"Loaded configuration from {self.config_file}")
             except Exception as e:
-                print(f"[CONFIG] Error loading config file: {e}")
+                logger.error(f"Error loading config file: {e}")
                 self.create_default_config()
         else:
-            print(f"[CONFIG] Configuration file {self.config_file} not found, creating default")
+            logger.warning(f"Configuration file {self.config_file} not found, creating default")
             self.create_default_config()
             
     def create_default_config(self):
@@ -74,12 +76,13 @@ class AppConfig:
         """
         Save configuration to file
         """
+        logger = logging.getLogger(__name__)
         try:
             with open(CONFIG_DIR + "/" + self.config_file, 'w') as f:
                 self.config.write(f)
-            print(f"[CONFIG] Configuration saved to {self.config_file}")
+            logger.info(f"Configuration saved to {self.config_file}")
         except Exception as e:
-            print(f"[CONFIG] Error saving config file: {e}")
+            logger.error(f"Error saving config file: {e}")
             
     def get(self, section: str, key: str, fallback: Any = None) -> Any:
         """

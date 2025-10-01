@@ -17,25 +17,27 @@ from app_config import APP_CONFIG
 # Import the BaslerCamera analysis modules for direct usage
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 try:
+    # Setup logger first
+    logger = logging.getLogger(__name__)
+
     # First try the direct import path
     try:
         from camera.basler.analysis.image_analyzer import ImageAnalyzer
-        from camera.basler.analysis.presentation_processor import PresentationProcessor
+        from camera.basler.parallel.sequential_presentation_processor import SequentialPresentationProcessor
         from camera.basler.camera import BaslerCamera
-        logger = logging.getLogger(__name__)
-        logger.info("Successfully imported BaslerCamera analysis modules")
+        logger.debug("Successfully imported BaslerCamera analysis modules")
     except ImportError:
         # If that fails, try the alternative import path
-        logger.info("Trying alternative import path for BaslerCamera modules")
+        logger.debug("Trying alternative import path for BaslerCamera modules")
         from source.camera.basler.analysis.image_analyzer import ImageAnalyzer
-        from source.camera.basler.analysis.presentation_processor import PresentationProcessor
+        from source.camera.basler.parallel.sequential_presentation_processor import SequentialPresentationProcessor
         from source.camera.basler.camera import BaslerCamera
-        logger.info("Successfully imported BaslerCamera analysis modules using alternative path")
+        logger.debug("Successfully imported BaslerCamera analysis modules using alternative path")
     
     # Create a temporary instance of BaslerCamera for analysis
     try:
         analyzer_camera = BaslerCamera()
-        logger.info("Successfully created BaslerCamera instance")
+        logger.debug("Successfully created BaslerCamera instance")
     except Exception as camera_error:
         logger.error(f"Failed to create BaslerCamera instance: {camera_error}")
         analyzer_camera = None
@@ -43,16 +45,14 @@ except ImportError as e:
     logger.error(f"Failed to import BaslerCamera modules: {e}")
     analyzer_camera = None
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Logger already set up above
 
 router = APIRouter(prefix="/inference")
 
 # Initialize inference service with error handling
 try:
     inference_service = WoodKnotInferenceService()
-    logger.info("Inference service initialized successfully")
+    logger.debug("Inference service initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize inference service: {e}")
     inference_service = None
@@ -60,10 +60,61 @@ except Exception as e:
 
 @router.get("/status")
 def get_inference_status():
-    """Get inference service status"""
+    """Get inference service status with detailed diagnostics"""
     if inference_service is None:
-        raise HTTPException(status_code=503, detail="Inference service failed to initialize")
-    return inference_service.get_status()
+        return JSONResponse(
+            status_code=503,
+            content={
+                "result": False,
+                "error": "Inference service failed to initialize",
+                "details": {
+                    "service_initialized": False,
+                    "model_available": False,
+                    "model_path": "Unknown",
+                    "error_message": "Service initialization failed during startup"
+                }
+            }
+        )
+    
+    try:
+        status = inference_service.get_status()
+        model_path_exists = os.path.exists(inference_service.model_path)
+        
+        # Enhanced status with detailed diagnostics
+        enhanced_status = {
+            "result": True,
+            "service_initialized": True,
+            "model_available": status["model_available"],
+            "model_path": status["model_path"],
+            "model_path_exists": model_path_exists,
+            "config": status["config"]
+        }
+        
+        # Add specific error information if model is not available
+        if not status["model_available"]:
+            if not model_path_exists:
+                enhanced_status["error_message"] = f"Model file not found at: {status['model_path']}"
+                enhanced_status["suggestion"] = "Please ensure the AI model file (best.onnx) exists in the model directory"
+            else:
+                enhanced_status["error_message"] = "Model file exists but failed to load"
+                enhanced_status["suggestion"] = "Check server logs for model loading errors. The model file may be corrupted or incompatible."
+        
+        return enhanced_status
+        
+    except Exception as e:
+        logger.error(f"Error getting inference status: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "result": False,
+                "error": f"Failed to get service status: {str(e)}",
+                "details": {
+                    "service_initialized": True,
+                    "model_available": False,
+                    "error_message": str(e)
+                }
+            }
+        )
 
 
 @router.post("/predict")
@@ -218,7 +269,7 @@ async def analyze_with_basler_analyzer(file: UploadFile = File(...)):
             # Initialize a temporary BaslerCamera for analysis
             from camera.basler.camera import BaslerCamera
             analyzer_camera = BaslerCamera()
-            logger.info("Created BaslerCamera for analysis")
+            logger.debug("Created BaslerCamera for analysis")
         except Exception as e:
             logger.error(f"Failed to create BaslerCamera: {e}")
             raise HTTPException(status_code=503, detail=f"Failed to initialize analyzer: {str(e)}")
@@ -374,8 +425,8 @@ async def test_basler_workflow(files: List[UploadFile] = File(...)):
             for i, path in enumerate(temp_file_paths):
                 group_name = chr(65 + min(i, 4))  # A, B, C, D, E
                 
-                # Save the image to a location accessible by the frontend
-                save_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "images", "inspection")
+                # Save the image to a location accessible by the frontend (under src-api/data)
+                save_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/images/inspection"))
                 os.makedirs(save_dir, exist_ok=True)
                 
                 # Create a unique filename
@@ -479,8 +530,8 @@ async def presentation_test(files: List[UploadFile] = File(...)):
             for i, path in enumerate(temp_file_paths):
                 group_name = chr(65 + min(i, 4))  # A, B, C, D, E
                 
-                # Save the image to a location accessible by the frontend
-                save_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "images", "inspection")
+                # Save the image to a location accessible by the frontend (under src-api/data)
+                save_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/images/inspection"))
                 os.makedirs(save_dir, exist_ok=True)
                 
                 # Create a unique filename

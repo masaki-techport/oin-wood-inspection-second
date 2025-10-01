@@ -2,6 +2,8 @@ import math
 import cv2
 import numpy as np
 import onnxruntime
+import logging
+import os
 
 from .yolo_utils import xywh2xyxy, nms, draw_detections, sigmoid
 
@@ -16,17 +18,44 @@ class YOLOSeg:
         self.initialize_model(path)
 
     def initialize_model(self, path):
-        # Try to use CUDA GPU provider if available, fallback to CPU
-        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        # Configure ONNX Runtime session options for better CPU performance
         try:
-            self.session = onnxruntime.InferenceSession(path, providers=providers)
-            # Check which provider is actually being used
+            so = onnxruntime.SessionOptions()
+            # Threading: prefer using most cores for intra-op and minimal inter-op
+            cpu_cores = os.cpu_count() or 4
+            so.intra_op_num_threads = max(1, cpu_cores - 1)
+            so.inter_op_num_threads = 1
+            so.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
+            so.enable_cpu_mem_arena = True
+            so.enable_mem_pattern = True
+            so.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
+
+            # Prefer CPU EP; optionally try OpenVINO if available with CPU fallback
+            preferred_providers = []
+            try:
+                # Only add if available in current ORT build
+                if 'OpenVINOExecutionProvider' in onnxruntime.get_available_providers():
+                    preferred_providers.append('OpenVINOExecutionProvider')
+            except Exception:
+                pass
+            preferred_providers += ['CPUExecutionProvider']
+
+            self.session = onnxruntime.InferenceSession(path, sess_options=so, providers=preferred_providers)
             used_provider = self.session.get_providers()[0]
-            print(f"Using ONNX Runtime with provider: {used_provider}")
+            logging.getLogger(__name__).info(f"Using ONNX Runtime with provider: {used_provider}, intra_op_threads={so.intra_op_num_threads}")
         except Exception as e:
-            print(f"Failed to initialize with CUDA, falling back to CPU: {e}")
+            logging.getLogger(__name__).warning(f"Failed to create optimized ORT session, falling back to CPU defaults: {e}")
             self.session = onnxruntime.InferenceSession(path, providers=['CPUExecutionProvider'])
-            print("Using ONNX Runtime with CPU provider only")
+            logging.getLogger(__name__).info("Using ONNX Runtime with CPU provider only")
+
+        # Enable OpenCV CPU optimizations
+        try:
+            cv2.setUseOptimized(True)
+            cpu_cores = os.cpu_count() or 4
+            cv2.setNumThreads(max(1, cpu_cores - 1))
+            logging.getLogger(__name__).info("OpenCV optimizations enabled")
+        except Exception:
+            pass
             
         # Get model info
         self.get_input_details()
@@ -54,10 +83,11 @@ class YOLOSeg:
     def prepare_input(self, image):
         self.img_height, self.img_width = image.shape[:2]
 
-        input_img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # Expect image in RGB color space here to avoid redundant conversions.
+        # Callers that have BGR (e.g., imdecode) should convert to RGB beforehand.
 
         # Resize input image
-        input_img = cv2.resize(input_img, (self.input_width, self.input_height))
+        input_img = cv2.resize(image, (self.input_width, self.input_height))
 
         # Scale input pixel values to 0 to 1
         input_img = input_img / 255.0

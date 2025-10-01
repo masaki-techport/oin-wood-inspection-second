@@ -16,6 +16,7 @@ from collections import deque
 import cv2
 import numpy as np
 import json
+import logging
 
 # Import app config for debug settings
 try:
@@ -26,14 +27,16 @@ except ImportError:
     DEBUG_MODE = False
     DEBUG_CAPTURE_TIME = False
 
+logger = logging.getLogger(__name__)
+
 def debug_print(message: str):
-    """Print debug message only if debug mode is enabled"""
+    """Debug via logger only if debug mode is enabled"""
     if DEBUG_MODE:
-        print(f"[DEBUG] {message}")
+        logger.debug(message)
 
 def info_print(message: str):
-    """Print info message (always shown)"""
-    print(f"[BUFFER] {message}")
+    """Info via logger (always shown)"""
+    logger.info(message)
 
 
 class SensorTriggeredCapture:
@@ -81,6 +84,9 @@ class SensorTriggeredCapture:
         self.camera_connected = False
         self.camera_type = "unknown"
         
+        # Cached inspection data for clearing
+        self.cached_inspection_data = None
+        
         if self.camera:
             try:
                 # Get camera type for better logging
@@ -105,7 +111,7 @@ class SensorTriggeredCapture:
         info_print(f"Initialized with {max_seconds}s buffer at {fps} FPS (buffer size: {self.buffer_size} frames), camera connected: {self.camera_connected}")
         
     def start_monitoring(self):
-        """Start monitoring mode - buffer is active but not saving"""
+        """Start monitoring mode - prepare system but don't start capturing until sensor triggers"""
         with self.lock:
             if self.thread is not None and self.thread.is_alive():
                 debug_print("Already running")
@@ -129,9 +135,9 @@ class SensorTriggeredCapture:
                     info_print(f"Warning: Error checking camera connection: {e}")
                     self.camera_connected = False
                 
-                # If it's a BaslerCamera, use its built-in recording mode
+                # If it's a BaslerCamera, prepare for sensor-triggered recording
                 if self.camera_type == "BaslerCamera":
-                    debug_print("Using BaslerCamera's built-in recording mode")
+                    debug_print("Preparing BaslerCamera for sensor-triggered recording")
                     try:
                         # Configure buffer settings
                         self.camera.max_buffer_seconds = self.max_seconds
@@ -144,15 +150,12 @@ class SensorTriggeredCapture:
                         if hasattr(self.camera, 'stop_grabbing'):
                             self.camera.stop_grabbing()
                             
-                        # Start recording mode
+                        # Set to sensor-triggered mode (don't start capturing yet)
                         if hasattr(self.camera, 'set_mode'):
-                            self.camera.set_mode("recording")
+                            self.camera.set_mode("sensor_triggered")
                         else:
-                            # Fallback if set_mode doesn't exist
-                            if hasattr(self.camera, 'start_grabbing'):
-                                self.camera.start_grabbing()
-                            if hasattr(self.camera, 'start_recording'):
-                                self.camera.buffer_manager.start_recording()
+                            # Fallback: just prepare the camera but don't start grabbing
+                            debug_print("Camera prepared for sensor-triggered mode")
                         
                         # Verify recording has started by checking the is_recording flag
                         if hasattr(self.camera, 'is_recording'):
@@ -162,10 +165,10 @@ class SensorTriggeredCapture:
                                 if hasattr(self.camera, 'start_recording'):
                                     self.camera.buffer_manager.start_recording()
                         
-                        # We don't need our own buffer thread for BaslerCamera
-                        self.is_recording = True
+                        # Don't start recording yet - wait for sensor trigger
+                        self.is_recording = False
                         self.status = "MONITORING"
-                        info_print("Started monitoring mode using BaslerCamera's built-in recording")
+                        info_print("Prepared BaslerCamera for sensor-triggered recording")
                         return
                     except Exception as e:
                         info_print(f"Failed to use BaslerCamera's built-in recording: {e}, falling back to standard buffer")
@@ -176,6 +179,26 @@ class SensorTriggeredCapture:
             self.thread = threading.Thread(target=self._capture_loop, daemon=True)
             self.thread.start()
             info_print("Started monitoring mode")
+    
+    def start_sensor_triggered_capture(self):
+        """Start capturing when sensor detects PASS_L_TO_R"""
+        with self.lock:
+            if self.camera_type == "BaslerCamera":
+                debug_print("Starting sensor-triggered capture for BaslerCamera")
+                try:
+                    # Start grabbing and recording when sensor triggers
+                    if hasattr(self.camera, 'start_grabbing'):
+                        self.camera.start_grabbing()
+                    if hasattr(self.camera, 'start_recording'):
+                        self.camera.buffer_manager.start_recording()
+                    
+                    self.is_recording = True
+                    self.status = "RECORDING"
+                    info_print("Sensor-triggered capture started - camera is now capturing and analyzing")
+                except Exception as e:
+                    info_print(f"Error starting sensor-triggered capture: {e}")
+            else:
+                debug_print(f"Sensor-triggered capture not implemented for {self.camera_type}")
             
     def stop_monitoring(self):
         """Stop all monitoring and recording"""
@@ -209,7 +232,7 @@ class SensorTriggeredCapture:
             result: Result from state machine (SAVE, DISCARD, None)
             state: Current state name
         """
-        print(f"[CAMERA_BUFFER] 🔍 handle_sensor_decision called: result={result}, state={state}")
+        logger.debug(f"handle_sensor_decision called: result={result}, state={state}")
         debug_print(f"Sensor decision: result={result}, state={state}")
         
         # Update capture timing debug information if enabled
@@ -227,44 +250,31 @@ class SensorTriggeredCapture:
         # Check if we're using BaslerCamera's built-in recording
         using_basler_recording = (self.camera and self.camera_type == "BaslerCamera")
         
-        # === RECORDING START CONDITIONS (撮影する) ===
-        # According to CSV: When B_ACTIVE state is entered (IDLE->B_ACTIVE) 
-        # or when B_THEN_A state is entered (B_ACTIVE->B_THEN_A)
-        if state == "B_ACTIVE":
-            # Object approaching from left, start recording (撮影する)
-            info_print("🔵 RECORDING START: B_ACTIVE state detected, starting camera recording")
-            self.sensors_active = True
-            self.status = "RECORDING"
+        # === DISCARD CONDITIONS (破棄する) - CHECK FIRST ===
+        # According to CSV: When return_from_L, return_from_R, error, timeout_or_manual_reset
+        if result in ["return_from_L", "return_from_R", "error", "timeout_or_manual_reset"]:
+            # Discard the buffer and STOP recording
+            info_print(f"🔴 DISCARD: {result} detected, stopping recording and discarding buffer")
+            self.sensors_active = False
+            self.status = "MONITORING"
+            self.last_save_message = "画像を破棄しました"
             
-            # Start fresh BaslerCamera recording for new detection
+            # STOP BaslerCamera recording
             if using_basler_recording and hasattr(self.camera, 'is_recording'):
                 try:
-                    # Stop any existing recording to ensure fresh start
                     if self.camera.is_recording:
-                        info_print("🔴 Stopping existing BaslerCamera recording for fresh start")
+                        info_print("🔴 Stopping BaslerCamera recording due to discard condition")
                         self.camera.buffer_manager.stop_recording()
                     
-                    # Start fresh recording
-                    info_print("🔴 Starting fresh BaslerCamera recording")
-                    self.camera.buffer_manager.start_recording()
+                    # Discard buffer images
+                    self.camera.discard_buffer_images()
+                    info_print("🔴 Buffer images discarded")
                 except Exception as e:
-                    debug_print(f"Error managing BaslerCamera recording: {e}")
+                    debug_print(f"Error stopping BaslerCamera recording: {e}")
             
-        elif state == "B_THEN_A":
-            # Object between both sensors, ensure recording is active
-            debug_print("B_THEN_A: Object between both sensors, ensuring recording is active")
-            self.sensors_active = True
-            self.status = "RECORDING"
+            # Increment discard counter
+            self.total_discards += 1
             
-            # Ensure recording is active for BaslerCamera
-            if using_basler_recording and hasattr(self.camera, 'is_recording'):
-                if not self.camera.is_recording:
-                    info_print("Starting BaslerCamera recording (B_THEN_A state)")
-                    try:
-                        self.camera.buffer_manager.start_recording()
-                    except Exception as e:
-                        debug_print(f"Error starting BaslerCamera recording: {e}")
-        
         # === IMAGE SAVING CONDITIONS (保存する) ===
         # According to CSV: When pass_L_to_R is detected (パターンB)
         elif result == "pass_L_to_R":
@@ -280,6 +290,13 @@ class SensorTriggeredCapture:
             self.status = "SAVING"
             self.processing_active = True
             self.processing_start_time = time.time()
+            
+            # Start timing session for pass_L_to_R processing
+            if hasattr(self.camera, 'timing_collector') and self.camera.timing_collector:
+                session_id = f"pass_L_to_R_{int(time.time())}"
+                self.camera.timing_collector.start_session(session_id, sensor_trigger_time=time.time())
+                self.camera.timing_collector.mark_phase_start("capture")
+                info_print(f"[CAMERA_BUFFER] 🕐 Started timing session: {session_id}")
             
             # Filter the buffer to only contain frames from the current detection sequence
             # This prevents saving frames from previous discarded sequences
@@ -353,24 +370,69 @@ class SensorTriggeredCapture:
             # Increment save counter
             self.total_saves += 1
             
-        # === DISCARD CONDITIONS ===
-        # According to CSV: When return_from_L, return_from_R, error, timeout_or_manual_reset
-        elif result in ["return_from_L", "return_from_R", "error", "timeout_or_manual_reset"]:
-            # Discard the buffer
-            debug_print(f"DISCARD: Discarding buffer ({result})")
-            self.status = "MONITORING"
-            self.last_save_message = "画像を破棄しました"
-            self.sensors_active = False
+        # === RECORDING START CONDITIONS (撮影する) ===
+        # Start recording for NEW detection (B_ACTIVE state)
+        elif state == "B_ACTIVE":
+            # Object approaching from left, start recording (撮影する)
+            # Handle both normal B_ACTIVE and B_ACTIVE after CLEAR_RESULTS
+            if result is None or result == "CLEAR_RESULTS":
+                info_print(f"🔵 RECORDING START: B_ACTIVE state detected (result={result}), starting camera recording")
+                self.sensors_active = True
+                self.status = "RECORDING"
+                
+                # Start fresh BaslerCamera recording for new detection
+                if using_basler_recording and hasattr(self.camera, 'is_recording'):
+                    try:
+                        # Stop any existing recording to ensure fresh start
+                        if self.camera.is_recording:
+                            info_print("🔴 Stopping existing BaslerCamera recording for fresh start")
+                            self.camera.buffer_manager.stop_recording()
+                        
+                        # Start fresh recording
+                        info_print("🔴 Starting fresh BaslerCamera recording")
+                        self.camera.buffer_manager.start_recording()
+                    except Exception as e:
+                        debug_print(f"Error managing BaslerCamera recording: {e}")
+                
+                # Reset processing state for new detection
+                self.processing_active = False
+                self.processing_start_time = None
+            else:
+                # B_ACTIVE with other results - just update status
+                debug_print(f"B_ACTIVE state with result={result} - updating status only")
+                self.sensors_active = True
+                self.status = "RECORDING"
             
-            if using_basler_recording:
-                # Use BaslerCamera's built-in discard method
-                try:
-                    self.camera.discard_buffer_images()
-                except Exception as e:
-                    debug_print(f"Error discarding BaslerCamera buffer: {e}")
+        # === CONTINUE RECORDING CONDITIONS ===
+        elif state == "B_THEN_A":
+            # Object between both sensors, ensure recording is active
+            debug_print("B_THEN_A: Object between both sensors, ensuring recording is active")
+            self.sensors_active = True
+            self.status = "RECORDING"
             
-            # Increment discard counter
-            self.total_discards += 1
+            # Ensure recording is active for BaslerCamera
+            if using_basler_recording and hasattr(self.camera, 'is_recording'):
+                if not self.camera.is_recording:
+                    info_print("Starting BaslerCamera recording (B_THEN_A state)")
+                    try:
+                        self.camera.buffer_manager.start_recording()
+                    except Exception as e:
+                        debug_print(f"Error starting BaslerCamera recording: {e}")
+
+        elif state == "A_ONLY":
+            # Object near exit, continue recording
+            debug_print("A_ONLY: Object near exit, continuing recording")
+            self.sensors_active = True
+            self.status = "RECORDING"
+            
+            # Ensure recording is active for BaslerCamera
+            if using_basler_recording and hasattr(self.camera, 'is_recording'):
+                if not self.camera.is_recording:
+                    info_print("Starting BaslerCamera recording (A_ONLY state)")
+                    try:
+                        self.camera.buffer_manager.start_recording()
+                    except Exception as e:
+                        debug_print(f"Error starting BaslerCamera recording: {e}")
             
         elif state == "IDLE":
             # Return to idle state - stop recording to prevent old images
@@ -380,12 +442,12 @@ class SensorTriggeredCapture:
             # Stop BaslerCamera recording when returning to IDLE to prevent buffer accumulation
             if using_basler_recording and hasattr(self.camera, 'is_recording'):
                 if self.camera.is_recording:
-                    info_print("[CAMERA_BUFFER] 🔴 IDLE state detected - stopping camera recording to prevent old image accumulation")
+                    info_print("🔴 IDLE state detected - stopping camera recording to prevent old image accumulation")
                     try:
                         self.camera.buffer_manager.stop_recording()
-                        info_print("[CAMERA_BUFFER] 🔴 Camera recording stopped successfully")
+                        info_print("🔴 Camera recording stopped successfully")
                     except Exception as e:
-                        info_print(f"[CAMERA_BUFFER] Error stopping camera recording: {e}")
+                        info_print(f"🔴 Error stopping camera recording: {e}")
             
     def _save_basler_buffer(self, save_dir, filter_start_time=None, filter_end_time=None):
         """
@@ -408,7 +470,7 @@ class SensorTriggeredCapture:
             basler_buffer_size = 0
             if hasattr(self.camera, 'buffer'):
                 basler_buffer_size = len(self.camera.buffer)
-                print(f"[CAMERA_BUFFER] Buffer size: {basler_buffer_size}")
+                logger.debug(f"Buffer size: {basler_buffer_size}")
                 
                 # If buffer is empty but we can get a frame, add it to buffer
                 if basler_buffer_size == 0:
@@ -508,7 +570,7 @@ class SensorTriggeredCapture:
         except Exception as e:
             info_print(f"[CAMERA_BUFFER] Error saving BaslerCamera buffer: {e}")
             import traceback
-            traceback.print_exc()
+            logger.exception("Error initializing camera buffer save thread")
             self.last_save_message = "保存エラー"
             self.processing_active = False
             self.processing_start_time = None
@@ -656,7 +718,7 @@ class SensorTriggeredCapture:
                 
         debug_print("Capture loop stopped")
         
-    def _create_timestamp_dir(self, base_dir="data/images/inspection"):
+    def _create_timestamp_dir(self, base_dir=None):
         """Create a timestamped directory for saving images"""
         # Use src-api/data/images/inspection as the default path
         default_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "images", "inspection")
@@ -664,11 +726,20 @@ class SensorTriggeredCapture:
         # Use app_config save path if available, otherwise use the default src-api path
         try:
             from app_config import app_config
-            base_dir = app_config.get('PATHS', 'inspection_images_dir', default_path)
+            resolved_dir = app_config.get('PATHS', 'inspection_images_dir', default_path)
         except:
-            base_dir = default_path
+            resolved_dir = default_path
+
+        # If caller provided a base_dir, prefer it. Normalize to absolute under project root when relative.
+        if base_dir:
+            if not os.path.isabs(base_dir):
+                resolved_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), base_dir)
+            else:
+                resolved_dir = base_dir
+
+        base_dir = os.path.abspath(resolved_dir)
         
-        print(f"[CAMERA_BUFFER] Using save directory: {base_dir}")
+        logger.info(f"Using save directory: {base_dir}")
         # Ensure base directory exists
         os.makedirs(base_dir, exist_ok=True)
         
@@ -805,6 +876,9 @@ class SensorTriggeredCapture:
         """
         Save capture timing debug report to a file
         """
+        if not DEBUG_MODE:
+            return
+            
         if not self.capture_timing_records:
             return
             
@@ -863,4 +937,12 @@ class SensorTriggeredCapture:
             info_print(f"[DEBUG_TIMING] Saved capture timing summary to {summary_file}")
             
         except Exception as e:
-            info_print(f"[DEBUG_TIMING] Error saving capture timing report: {e}") 
+            info_print(f"[DEBUG_TIMING] Error saving capture timing report: {e}")
+    
+    def clear_inspection_results(self):
+        """Clear cached inspection results for new inspection cycle"""
+        with self.lock:
+            self.cached_inspection_data = None
+            # Reset any relevant state
+            self.last_save_message = None
+            self.last_save_path = None 

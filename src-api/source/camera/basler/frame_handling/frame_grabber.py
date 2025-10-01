@@ -26,8 +26,8 @@ class FrameGrabber:
         self.error_count = 0
         self.last_error = None
         
-    def optimized_frame_grab(self, converter, max_attempts=5, grab_timeout=1000):
-        """Optimized frame grabbing implementation for better performance"""
+    def optimized_frame_grab(self, converter, max_attempts=3, grab_timeout=800):
+        """Optimized frame grabbing with reduced timeout and faster failure detection"""
         
         for attempt in range(max_attempts):
             try:
@@ -51,8 +51,8 @@ class FrameGrabber:
                         except Exception as start_error:
                             logger.error(f"Failed to start grabbing: {start_error}")
                     
-                    # Use a longer timeout for the first attempt
-                    current_timeout = grab_timeout * 2 if attempt == 0 else grab_timeout
+                    # Use a shorter timeout for faster failure detection
+                    current_timeout = grab_timeout if attempt == 0 else grab_timeout // 2
                     grab_result = self.camera.camera.RetrieveResult(current_timeout, pylon.TimeoutHandling_Return)
                 
                 # Process result outside lock for better concurrency
@@ -77,9 +77,9 @@ class FrameGrabber:
                     # Release grab result immediately to free resources
                     grab_result.Release()
                     
-                    # Log performance metrics
+                    # Log performance and timeout information
                     PERFORMANCE_METRICS['frame_grab_time'].append(conversion_time)
-                    logger.info(f"Successfully grabbed frame on attempt {attempt+1}")
+                    logger.debug(f"Successfully grabbed frame on attempt {attempt+1}, timeout: {current_timeout}ms")
                     
                     return {
                         "image": image_rgb,  # Return direct reference for better performance
@@ -95,14 +95,14 @@ class FrameGrabber:
                         self.last_error = "Grab result is None"
                     
                     self.error_count += 1
-                    logger.debug(f"Attempt {attempt+1}: {self.last_error}")
+                    logger.debug(f"Attempt {attempt+1}/{max_attempts}: {self.last_error}, timeout: {current_timeout}ms")
                     
                     # Try recovery steps based on the type of error
                     if attempt < max_attempts - 1:  # Don't perform recovery on last attempt
                         if "incompletely grabbed" in self.last_error:
                             # This is typically a network issue with GigE cameras
-                            logger.warning("Incomplete frame detected (network issue), adjusting settings before retry")
-                            time.sleep(0.5)  # Wait longer for network to stabilize
+                            logger.warning("Incomplete frame detected (network issue), using shorter recovery delay")
+                            time.sleep(0.2)  # Reduced from 0.5s for faster recovery
                             
                             # First try to adjust GigE camera settings that affect network reliability
                             try:
@@ -142,14 +142,14 @@ class FrameGrabber:
                                 except Exception as restart_error:
                                     logger.error(f"Error during grab restart: {restart_error}")
                         else:
-                            # For other errors, use a shorter delay
-                            time.sleep(0.15)
+                            # For other errors, use an even shorter delay
+                            time.sleep(0.05)  # Reduced from 0.15s
                     
             except Exception as e:
                 self.error_count += 1
                 self.last_error = str(e)
                 logger.debug(f"Exception during grab attempt {attempt+1}: {e}")
-                time.sleep(0.15)  # Slightly longer sleep time for error recovery
+                time.sleep(0.05)  # Reduced sleep time for faster error recovery
                 
                 # If we get a critical exception, try to reset the camera connection
                 if ("Device not accessible" in str(e) or "Access denied" in str(e) or 
@@ -189,14 +189,14 @@ class FrameGrabber:
                     except Exception as recovery_error:
                         logger.error(f"Recovery attempt failed: {recovery_error}")
         
-        # All attempts failed - create a default empty image as fallback
-        logger.warning("Failed to grab image after multiple attempts")
+        # All attempts failed - create a lightweight fallback
+        logger.warning(f"Failed to grab image after {max_attempts} attempts, using fallback")
         
-        # Create a small black image with "No Camera Signal" text as fallback
-        height, width = 480, 640
+        # Create a smaller fallback image for better performance
+        height, width = 240, 320  # Reduced size
         fallback_image = np.zeros((height, width, 3), dtype=np.uint8)
-        cv2.putText(fallback_image, "No Camera Signal", (width//2 - 100, height//2),
-                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        cv2.putText(fallback_image, "Camera Timeout", (10, height//2),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
         
         return {
             "image": fallback_image,

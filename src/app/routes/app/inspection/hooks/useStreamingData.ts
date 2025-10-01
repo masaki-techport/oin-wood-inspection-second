@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { getApiUrl } from '@/lib/api-client';
 import { AnalysisResponse, DetectionResult, ProgressiveAnalysisData, SensorStatusData, StreamingResult } from '../types/streaming';
 
 interface StreamingConfig {
@@ -23,7 +24,7 @@ interface CameraStreamHookReturn {
 }
 
 const DEFAULT_CONFIG: StreamingConfig = {
-  baseUrl: 'http://localhost:8000',
+  baseUrl: getApiUrl(),
   reconnectDelay: 1000,
   maxReconnectAttempts: 5
 };

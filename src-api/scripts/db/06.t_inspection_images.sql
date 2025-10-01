@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS t_inspection_images (
     image_type VARCHAR(50) NOT NULL COMMENT 'Type of image (raw, processed, etc.)',
     capture_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT 'When the image was captured',
     image_metadata JSON DEFAULT NULL COMMENT 'Additional image metadata',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Record creation time',
+    create_dt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
+    update_dt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
     CONSTRAINT fk_images_inspection
         FOREIGN KEY (inspection_id)
         REFERENCES t_inspection (inspection_id)

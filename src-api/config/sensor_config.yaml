@@ -1,19 +1,12 @@
-# Sensor Configuration
-
-# DIO Device Settings
-dio:
-  device_name: "DIO001"  # Default device name for Ethernet connection
-  simulation_mode: false  # Set to true for simulation, false for real hardware
-  bit_a: 0  # Sensor A connected to bit 0
-  bit_b: 1  # Sensor B connected to bit 1
-
-# Buffer Settings
 buffer:
-  duration_seconds: 30  # How many seconds of images to buffer
-  fps: 10  # Frames per second to capture
-  
-# Save Settings
+  duration_seconds: 30
+  fps: 10
+dio:
+  bit_a: 0
+  bit_b: 1
+  device_name: DIO000
+  simulation_mode: false
 save:
-  base_directory: "data/images/inspection"  # Base directory for saved images
-  format: "jpg"  # Image format (jpg, png, bmp)
-  quality: 95  # JPEG quality (0-100) 
+  base_directory: c:\Duy\GitHub\oin-wood-inspection\src-api\data\images\inspection
+  format: jpg
+  quality: 95

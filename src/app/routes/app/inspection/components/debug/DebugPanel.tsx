@@ -1603,7 +1603,7 @@ const DebugPanel: React.FC<DebugPanelProps> = ({
                         <span key={img.id || index} className="mr-2">
                           <button
                             className="text-blue-500 hover:text-blue-700 mr-1"
-                            onClick={() => onImageTest(img.image_path)}
+                            onClick={() => onImageTest(img.image_path, img.inspection_id)}
                           >
                             {img.group_name}
                           </button>
@@ -1659,11 +1659,29 @@ const DebugPanel: React.FC<DebugPanelProps> = ({
                           // Update UI to show error with more details
                           e.currentTarget.style.display = 'none';
                           
-                          // Clear any existing error messages first
-                          const existingErrors = e.currentTarget.parentElement?.querySelectorAll('.image-error-message');
-                          existingErrors?.forEach(el => el.remove());
+                          // Get parent element with safety checks
+                          const targetElement = e.currentTarget;
+                          const parentElement = targetElement?.parentElement;
                           
-                          e.currentTarget.parentElement?.classList.add('bg-yellow-100', 'border-2', 'border-red-400', 'rounded', 'p-4', 'flex', 'flex-col', 'items-center', 'justify-center');
+                          // Ensure both elements are still connected to DOM
+                          if (!parentElement || !targetElement?.isConnected || !parentElement.isConnected) {
+                            console.warn('Parent element not available or disconnected from DOM');
+                            return;
+                          }
+                          
+                          // Clear any existing error messages first
+                          const existingErrors = parentElement.querySelectorAll('.image-error-message');
+                          existingErrors?.forEach(el => {
+                            if (el.isConnected) {
+                              try {
+                                el.remove();
+                              } catch (error) {
+                                console.warn('Failed to remove existing error message:', error);
+                              }
+                            }
+                          });
+                          
+                          parentElement.classList.add('bg-yellow-100', 'border-2', 'border-red-400', 'rounded', 'p-4', 'flex', 'flex-col', 'items-center', 'justify-center');
                           
                           // Create error container
                           const errorContainer = document.createElement('div');
@@ -1692,26 +1710,62 @@ const DebugPanel: React.FC<DebugPanelProps> = ({
                           retryButton.className = 'mt-2 bg-blue-500 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded';
                           retryButton.innerText = '再試行';
                           retryButton.onclick = () => {
-                            // Remove error container
-                            errorContainer.remove();
-                            // Reset parent element styles
-                            e.currentTarget.parentElement?.classList.remove('bg-yellow-100', 'border-2', 'border-red-400', 'rounded', 'p-4', 'flex', 'flex-col', 'items-center', 'justify-center');
-                            // Show image again
-                            e.currentTarget.style.display = '';
-                            // Force reload by updating src
-                            e.currentTarget.src = testImageUrl + '?t=' + Date.now();
+                            // Verify elements are still connected before manipulation
+                            if (!errorContainer.isConnected || !parentElement.isConnected || !targetElement.isConnected) {
+                              console.warn('Elements disconnected, cannot retry');
+                              return;
+                            }
+                            
+                            try {
+                              // Remove error container
+                              errorContainer.remove();
+                              // Reset parent element styles
+                              parentElement.classList.remove('bg-yellow-100', 'border-2', 'border-red-400', 'rounded', 'p-4', 'flex', 'flex-col', 'items-center', 'justify-center');
+                              // Show image again
+                              targetElement.style.display = '';
+                              // Force reload by updating src
+                              targetElement.src = testImageUrl + '?t=' + Date.now();
+                            } catch (error) {
+                              console.error('Error during retry operation:', error);
+                            }
                           };
                           errorContainer.appendChild(retryButton);
                           
-                          e.currentTarget.parentElement?.appendChild(errorContainer);
+                          // Safely append error container
+                          try {
+                            parentElement.appendChild(errorContainer);
+                          } catch (error) {
+                            console.error('Failed to append error container:', error);
+                          }
                         }}
                         onLoad={(e) => {
                           console.log("Image loaded successfully:", testImageUrl);
-                          // Reset any error styling if the image loads successfully
-                          e.currentTarget.parentElement?.classList.remove('bg-yellow-100', 'border-2', 'border-red-400', 'rounded', 'p-4', 'flex', 'flex-col', 'items-center', 'justify-center');
-                          // Remove any error messages
-                          const errorMessages = e.currentTarget.parentElement?.querySelectorAll('.image-error-message');
-                          errorMessages?.forEach(el => el.remove());
+                          
+                          // Get parent element with safety checks
+                          const targetElement = e.currentTarget;
+                          const parentElement = targetElement?.parentElement;
+                          
+                          // Ensure both elements are still connected to DOM
+                          if (parentElement && targetElement?.isConnected && parentElement.isConnected) {
+                            try {
+                              // Reset any error styling if the image loads successfully
+                              parentElement.classList.remove('bg-yellow-100', 'border-2', 'border-red-400', 'rounded', 'p-4', 'flex', 'flex-col', 'items-center', 'justify-center');
+                              
+                              // Remove any error messages
+                              const errorMessages = parentElement.querySelectorAll('.image-error-message');
+                              errorMessages?.forEach(el => {
+                                if (el.isConnected) {
+                                  try {
+                                    el.remove();
+                                  } catch (error) {
+                                    console.warn('Failed to remove error message:', error);
+                                  }
+                                }
+                              });
+                            } catch (error) {
+                              console.warn('Error during image load success handling:', error);
+                            }
+                          }
                         }}
                       />
                       <button

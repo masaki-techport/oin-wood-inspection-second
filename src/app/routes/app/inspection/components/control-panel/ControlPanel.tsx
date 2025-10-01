@@ -1,7 +1,6 @@
 import React from 'react';
 import { ControlPanelProps } from '../../types';
 import CameraSelector from './CameraSelector';
-import AIThresholdInput from './AIThresholdInput';
 import StatusDisplay from './StatusDisplay';
 import ControlButtons from './ControlButtons';
 import SensorControls from './SensorControls';
@@ -12,8 +11,6 @@ import SensorControls from './SensorControls';
 const ControlPanel: React.FC<ControlPanelProps> = ({
   selectedCameraType,
   onCameraTypeChange,
-  aiThreshold,
-  setAiThreshold,
   status,
   onStart,
   onStop,
@@ -26,7 +23,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   onToggleSensorA,
   onToggleSensorB,
   sensorAActive,
-  sensorBActive
+  sensorBActive,
+  isNavigatingHome
 }) => {
   return (
     <div className="bg-white p-6 border-b-2 border-gray-300">
@@ -39,13 +37,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
             disabled={isActive}
           />
         )}
-
-        {/* AI Threshold Input */}
-        <AIThresholdInput 
-          aiThreshold={aiThreshold} 
-          setAiThreshold={setAiThreshold}
-          disabled={isActive}
-        />
         
         {/* Status Display */}
         <StatusDisplay status={status} />
@@ -55,7 +46,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
           onStart={onStart} 
           onStop={onStop} 
           onTop={onTop} 
-          isActive={isActive} 
+          isActive={isActive}
+          isNavigatingHome={isNavigatingHome}
         />
         
         {/* Test button in debug mode */}

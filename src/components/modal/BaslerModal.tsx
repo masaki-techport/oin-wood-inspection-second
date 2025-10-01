@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
+import { api } from '@/lib/api-client';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { AlertTriangle } from 'lucide-react';
 
@@ -18,7 +19,7 @@ const BaslerModal: React.FC<BaslerModalProps> = ({ onClose }) => {
 
     const fetchImage = async () => {
         try {
-            const res = await axios.get('http://localhost:8000/api/camera/snapshot');
+            const res = await api.get('/camera/snapshot');
             if (res.data.image) {
                 setImage(`data:image/jpeg;base64,${res.data.image}`);
                 if (droppedRef.current) {
@@ -49,21 +50,21 @@ const BaslerModal: React.FC<BaslerModalProps> = ({ onClose }) => {
         const init = async () => {
             try {
                 // 残っている場合は停止して切断する
-                await axios.post('http://localhost:8000/api/camera/stop', {}).catch(() => { });
-                await axios.post('http://localhost:8000/api/camera/disconnect', {}).catch(() => { });
+                await api.post('/camera/stop', {}).catch(() => { });
+                await api.post('/camera/disconnect', {}).catch(() => { });
 
                 // カメラに接続する
-                await axios.post('http://localhost:8000/api/camera/connect');
+                await api.post('/camera/connect');
 
                 // 接続を確認する
-                const res = await axios.get('http://localhost:8000/api/camera/is_connected');
+                const res = await api.get('/camera/is_connected');
                 const connected = res.data.connected === true;
                 setIsConnected(connected);
 
                 if (!connected) return;
 
                 // 接続が成功した場合は画像の取得を開始する
-                await axios.post('http://localhost:8000/api/camera/start');
+                await api.post('/camera/start');
                 await fetchImage();
                 intervalRef.current = setInterval(fetchImage, 100);
 
@@ -78,15 +79,15 @@ const BaslerModal: React.FC<BaslerModalProps> = ({ onClose }) => {
 
         return () => {
             if (intervalRef.current) clearInterval(intervalRef.current);
-            axios.post('http://localhost:8000/api/camera/stop', {}).catch(() => { });
-            axios.post('http://localhost:8000/api/camera/disconnect', {}).catch(() => { });
+            api.post('/camera/stop', {}).catch(() => { });
+            api.post('/camera/disconnect', {}).catch(() => { });
         };
     }, []);
 
     const handleClose = () => {
         if (intervalRef.current) clearInterval(intervalRef.current);
-        axios.post('http://localhost:8000/api/camera/stop', {}).catch(() => { });
-        axios.post('http://localhost:8000/api/camera/disconnect', {}).catch(() => { });
+        api.post('/camera/stop', {}).catch(() => { });
+        api.post('/camera/disconnect', {}).catch(() => { });
         onClose();
     };
 

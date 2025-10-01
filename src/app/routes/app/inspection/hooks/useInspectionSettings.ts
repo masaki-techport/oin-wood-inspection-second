@@ -7,8 +7,6 @@ interface MeasurementsConfig {
   no_defect: number;
   small_knot: number;
   large_knot: number;
-  hole: number;
-  discoloration: number;
   [key: string]: number;
 }
 
@@ -41,9 +39,7 @@ export const useInspectionSettings = () => {
     measurements: {
       no_defect: 45,
       small_knot: 45,
-      large_knot: 45,
-      hole: 45,
-      discoloration: 45
+      large_knot: 45
     },
     ui: {
       textbox: {
@@ -72,7 +68,26 @@ export const useInspectionSettings = () => {
   useEffect(() => {
     if (data && 'result' in data && data.result && data.data) {
       setSettings(data.data);
-      console.log('Successfully loaded inspection settings');
+      console.log('Successfully loaded inspection settings:', data.data);
+      
+      // Validate that the required measurement values exist
+      const measurements = data.data.measurements || {};
+      if (!measurements.no_defect) {
+        console.warn('⚠️ Missing no_defect measurement value, using default');
+      }
+      if (!measurements.small_knot) {
+        console.warn('⚠️ Missing small_knot measurement value, using default');
+      }
+      if (!measurements.large_knot) {
+        console.warn('⚠️ Missing large_knot measurement value, using default');
+      }
+      
+      // Log the loaded measurement values for debugging
+      console.log('📏 Loaded measurement values:', {
+        no_defect: measurements.no_defect || defaultSettings.measurements.no_defect,
+        small_knot: measurements.small_knot || defaultSettings.measurements.small_knot,
+        large_knot: measurements.large_knot || defaultSettings.measurements.large_knot
+      });
     } else if (error) {
       console.error('Error fetching inspection settings:', error);
       // Set default settings when API fails
@@ -83,12 +98,17 @@ export const useInspectionSettings = () => {
         title: '設定取得エラー',
         message: '検査設定を取得できませんでした。デフォルト値を使用します。'
       });
+    } else {
+      // If no data and no error, set default settings
+      console.log('No inspection settings data received, using defaults');
+      setSettings(defaultSettings);
     }
   }, [data, error, addNotification, defaultSettings]);
 
   // Get measurement value based on defect type
   const getMeasurementForDefectType = (defectType: string, inspectionResult: string): string => {
     if (!settings) {
+      console.log(`📏 No settings available, using default: ${defaultSettings.default_measurement}`);
       return String(defaultSettings.default_measurement); // Default fallback if settings not loaded
     }
 
@@ -97,22 +117,19 @@ export const useInspectionSettings = () => {
     
     if (inspectionResult === '無欠点') {
       measurementKey = 'no_defect';
+      console.log(`📏 Result is 無欠点 (no_defect), using key: ${measurementKey}`);
     } else if (inspectionResult === 'こぶし') {
       measurementKey = 'small_knot';
+      console.log(`📏 Result is こぶし (small_knot), using key: ${measurementKey}`);
     } else if (inspectionResult === '節あり') {
       measurementKey = 'large_knot';
+      console.log(`📏 Result is 節あり (large_knot), using key: ${measurementKey}`);
     }
     
-    // Check specific defect types
-    if (defectType.includes('穴')) {
-      measurementKey = 'hole';
-    }
-    if (defectType.includes('変色')) {
-      measurementKey = 'discoloration';
-    }
-
     // Get the measurement value from settings
     const measurementValue = settings.measurements[measurementKey] || settings.default_measurement;
+    console.log(`📏 Final measurement key: ${measurementKey}, value: ${measurementValue}`);
+    console.log(`📏 Available measurements:`, settings.measurements);
     return String(measurementValue);
   };
 

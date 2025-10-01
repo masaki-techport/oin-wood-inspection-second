@@ -200,19 +200,60 @@ class RealTimeResultsManager:
                     total_processed_images += result.get('processed_images', 0)
                     total_successful_images += result.get('successful_images', 0)
             
-            # Determine overall inspection result
+            # Determine overall inspection result and consolidated length
+            max_length = 0.0  # Initialize with 0.0 instead of None to avoid NULL values
             if all_detections:
                 # Check for specific defect types and lengths
-                has_knots = any(d.get('class_name', '').lower() in ['knot', '節', 'dead_knot', 'live_knot', 'tight_knot'] 
+                has_knots = any(d.get('class_name', '').lower() in ['knot', '節', 'dead_knot', 'live_knot', 'tight_knot']
                               for d in all_detections)
-                max_length = max((max(d.get('bbox', [0, 0, 0, 0])[2:]) / 100 for d in all_detections), default=0)
                 
-                if has_knots and max_length > 1.5:
-                    overall_result = "こぶし"
-                elif has_knots or confidence_above_threshold:
-                    overall_result = "節あり"
-                else:
+                # Get the maximum length from all detections that have a calculated length
+                # Only consider knot-related defects (class_id 2,3,4,5) for max_length
+                max_length = 0
+                for d in all_detections:
+                    if ('length' in d and isinstance(d['length'], (int, float)) and 
+                        d.get('class_id') in [2, 3, 4, 5] and d['length'] > max_length):
+                        max_length = d['length']
+                        logger.debug(f"Updated max_length to {max_length}mm from knot detection class_id {d.get('class_id')}")
+                    
+                # If no length found in detections, check if any group results have a max_length
+                if max_length == 0:
+                    for result in group_results:
+                        if result and isinstance(result.get('max_length'), (int, float)) and result['max_length'] > max_length:
+                            max_length = result['max_length']
+                            logger.debug(f"Updated max_length to {max_length}mm from group result")
+                            
+                logger.debug(f"Consolidated max_length: {max_length} mm")
+
+                # Get the configurable length threshold from settings
+                try:
+                    from services.settings_service import get_current_length_threshold
+                    length_threshold = get_current_length_threshold()
+                    if not isinstance(length_threshold, (int, float)) or length_threshold <= 0:
+                        logger.warning(f"Invalid length threshold from settings: {length_threshold}, using default 10.0")
+                        length_threshold = 10.0
+                except Exception as e:
+                    logger.warning(f"Error getting length threshold from settings: {e}, using default 10.0")
+                    length_threshold = 10.0
+                
+                # Improved classification logic based on defect types and length
+                if has_knots:
+                    # For knots, use length-based classification with configurable threshold
+                    if max_length > length_threshold:
+                        overall_result = "節あり"
+                        logger.info(f"Classification: 節あり (knots with length {max_length}mm > threshold {length_threshold}mm)")
+                    else:
+                        overall_result = "こぶし"
+                        logger.info(f"Classification: こぶし (knots with length {max_length}mm <= threshold {length_threshold}mm)")
+                elif confidence_above_threshold:
+                    # If confidence is above threshold but no knots (e.g., holes, discoloration)
+                    # These are not classified by length, but still indicate defects
                     overall_result = "無欠点"
+                    logger.info(f"Classification: 無欠点 (defects detected but no knots)")
+                else:
+                    # No defects detected
+                    overall_result = "無欠点"
+                    logger.info(f"Classification: 無欠点 (no defects detected)")
             else:
                 overall_result = "無欠点"
             
@@ -222,6 +263,7 @@ class RealTimeResultsManager:
                 'detections': all_detections,
                 'confidence_above_threshold': confidence_above_threshold,
                 'results': overall_result,
+                'max_length': max_length,  # Add consolidated maximum length
                 'processing_summary': {
                     'total_groups': len(group_results),
                     'successful_groups': successful_groups,

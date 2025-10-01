@@ -109,7 +109,44 @@ export type PresentationImage = {
 export const fetchPresentationImages = (
   data: InspectionDetailsRequest
 ): Promise<ApiResult<PresentationImage[]>> => {
+  // Validate inspection ID before making the API call
+  if (!data.id || typeof data.id !== 'number' || data.id <= 0 || !isFinite(data.id)) {
+    console.error('Invalid inspection ID for fetchPresentationImages:', data.id);
+    return Promise.resolve({
+      result: false,
+      message: 'Invalid inspection ID',
+      data: []
+    } as ApiResult<PresentationImage[]>);
+  }
+  
   return api.get(`/inspections/${data.id}/presentation-images`);
+};
+
+// Type for inspection images from t_inspection_images table
+export type InspectionImage = {
+  id: number;
+  inspection_id: number;
+  image_no: number;
+  image_path: string;
+  image_type: string;
+  capture_timestamp: string | null;
+};
+
+// fetchInspectionImages: call GET with inspection id, response ApiResult<InspectionImage[]>
+export const fetchInspectionImages = (
+  data: InspectionDetailsRequest
+): Promise<ApiResult<InspectionImage[]>> => {
+  // Validate inspection ID before making the API call
+  if (!data.id || typeof data.id !== 'number' || data.id <= 0 || !isFinite(data.id)) {
+    console.error('Invalid inspection ID for fetchInspectionImages:', data.id);
+    return Promise.resolve({
+      result: false,
+      message: 'Invalid inspection ID',
+      data: []
+    } as ApiResult<InspectionImage[]>);
+  }
+  
+  return api.get(`/inspections/${data.id}/images`);
 };
 
 // Latest presentation images

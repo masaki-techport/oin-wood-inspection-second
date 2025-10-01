@@ -1,5 +1,5 @@
 import { api } from '@/lib/api-client';
-import { ApiResult, Inspection } from '@/types/api';
+import { ApiResult, Inspection, BulkDeleteRequest, BulkDeleteResponse } from '@/types/api';
 
 // ==== 型定義 ====
 
@@ -43,4 +43,15 @@ export const fetchInspectionResultById = (
   return api.get('/inspections/result', {
     params: { inspection_id },
   });
+};
+
+// 【API】複数の検査記録を一括削除
+// エンドポイント: /inspections/bulk-delete
+// メソッド: DELETE
+// パラメータ: inspection_ids（削除対象の検査IDの配列）
+// レスポンス: ApiResult<BulkDeleteResponse>（削除件数を含む結果）
+export const deleteInspectionsByIds = (
+  data: BulkDeleteRequest
+): Promise<ApiResult<BulkDeleteResponse>> => {
+  return api.delete('/inspections/bulk-delete', { data });
 };

@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { InspectionDetailsImg } from '@/types/api';
 import { DefectStatus, defectStatusColors, defectLabelColors } from '@/utils/defectStatus';
 import CleanImageWithBoundingBoxes from '@/components/ui/CleanImageWithBoundingBoxes';
+import StandardHeader from '@/components/ui/StandardHeader';
 
 interface ImagePopupModalProps {
   isOpen: boolean;
@@ -10,6 +11,7 @@ interface ImagePopupModalProps {
   imageIdentifier: string; // A, B, C, D, E, or grid position
   defectData: InspectionDetailsImg | InspectionDetailsImg[] | null;
   defectStatus: DefectStatus; // 'none' | 'minor' | 'major'
+  inspectionId: number;
   isLoading?: boolean;
   error?: string | null;
   onRetry?: () => void;
@@ -32,6 +34,7 @@ const ImagePopupModal: React.FC<ImagePopupModalProps> = ({
   imageIdentifier,
   defectData,
   defectStatus,
+  inspectionId,
   isLoading = false,
   error = null,
   onRetry
@@ -81,7 +84,7 @@ const ImagePopupModal: React.FC<ImagePopupModalProps> = ({
 
   // Get background color based on defect status - use solid colors like the reference image
   const getBackgroundColor = () => {
-    if (isLoading) return 'bg-gray-500';
+    if (isLoading) return 'bg-gray-300';
     if (error) return 'bg-yellow-500';
 
     switch (defectStatus) {
@@ -92,7 +95,7 @@ const ImagePopupModal: React.FC<ImagePopupModalProps> = ({
       case 'major':
         return 'bg-red-500';
       default:
-        return 'bg-gray-500';
+        return 'bg-gray-300';
     }
   };
 
@@ -116,22 +119,18 @@ const ImagePopupModal: React.FC<ImagePopupModalProps> = ({
       onClick={handleBackdropClick}
     >
       <div
-        className={`relative w-[90vw] max-w-6xl h-[90vh] rounded-lg shadow-xl overflow-hidden ${getBackgroundColor()}`}
+        className={`relative w-[95vw] max-w-7xl h-[90vh] rounded-lg shadow-xl overflow-hidden ${getBackgroundColor()}`}
         onClick={handleModalClick}
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
       >
-        {/* Header Section - Match InspectionDetailsModal colors */}
-        <div className="bg-cyan-800 text-white p-4 flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            {/* OiN Logo */}
-            <div className="bg-white text-cyan-800 px-2 py-1 rounded font-bold text-lg">
-              OIN
-            </div>
-            <h1 className="text-2xl font-bold">木材検査システム　詳細</h1>
-          </div>
-        </div>
+        {/* Header Section with standardized styling */}
+        <StandardHeader
+          title="木材検査システム　詳細"
+          variant="modal"
+          showLogo={true}
+        />
 
         {/* Main Content Area */}
         <div className="flex h-[calc(100%-120px)] p-6 gap-6">
@@ -175,6 +174,7 @@ const ImagePopupModal: React.FC<ImagePopupModalProps> = ({
               <CleanImageWithBoundingBoxes
                 imageUrl={imageUrl}
                 boxes={defectData}
+                inspectionId={inspectionId}
               />
             ) : (
               <div className="w-[600px] h-[400px] bg-gray-100 flex items-center justify-center rounded">

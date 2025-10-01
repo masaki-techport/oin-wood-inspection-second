@@ -2,6 +2,7 @@
 Continuous frame grabbing loop implementation for BaslerCamera.
 """
 
+import os
 import time
 import logging
 import numpy as np
@@ -26,8 +27,20 @@ def grab_loop(camera_instance, stop_event, grab_lock, lock, frame_grabber, image
     
     # Pre-allocate buffers for better memory efficiency
     image_cache = None
-    target_fps = camera_instance.buffer_fps
-    frame_interval = 1.0 / target_fps if target_fps > 0 else 0.1
+    
+    # Get interval time from params.yaml for proper timing
+    try:
+        import yaml
+        config_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'config', 'params.yaml')
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+            interval_time_ms = config.get('IntervalTime', 1000)  # Default 1000ms
+            frame_interval = interval_time_ms / 1000.0  # Convert to seconds
+            logger.info(f"Using interval time from params.yaml: {interval_time_ms}ms ({frame_interval:.3f}s)")
+    except Exception as e:
+        logger.warning(f"Could not read IntervalTime from params.yaml: {e}, using default 1.0s")
+        frame_interval = 1.0  # Default 1 second
+    
     next_frame_time = time.time()
     
     # Main loop - runs until stop_event is set
@@ -46,6 +59,16 @@ def grab_loop(camera_instance, stop_event, grab_lock, lock, frame_grabber, image
             # Schedule next frame
             next_frame_time = current_time + frame_interval
             
+            # Check if buffer manager is ready for new image (rate limiting with tolerance)
+            if hasattr(camera_instance, 'buffer_manager') and hasattr(camera_instance.buffer_manager, '_last_analysis_time'):
+                time_since_last = current_time - camera_instance.buffer_manager._last_analysis_time
+                interval_seconds = camera_instance.buffer_manager.interval_time_ms / 1000.0
+                
+                if time_since_last < (interval_seconds - 0.05):  # 50ms tolerance
+                    # Skip this frame due to rate limiting
+                    logger.debug(f"Grab loop: skipping frame due to rate limiting ({time_since_last:.3f}s < {interval_seconds-0.05:.3f}s)")
+                    continue
+            
             # Check if camera is grabbing
             if not camera_instance.camera.IsGrabbing():
                 logger.info("Camera not grabbing, restarting...")
@@ -62,6 +85,15 @@ def grab_loop(camera_instance, stop_event, grab_lock, lock, frame_grabber, image
             try:
                 grab_timeout = 250  # Reduced timeout for better responsiveness (ms)
                 start_time = time.time()
+                
+                # Start timing measurement for frame grab
+                timing_collector = getattr(camera_instance, 'timing_collector', None)
+                grab_measurement_id = None
+                if timing_collector:
+                    grab_measurement_id = timing_collector.start_measurement(
+                        "frame_grab", 
+                        {"timeout_ms": grab_timeout, "frame_index": frames_captured}
+                    )
                 
                 # Use the grab_lock with minimal lock duration
                 grab_result = None
@@ -107,14 +139,39 @@ def grab_loop(camera_instance, stop_event, grab_lock, lock, frame_grabber, image
                     if camera_instance.is_recording:
                         try:
                             buffer_size_before = len(camera_instance.buffer)
+                            current_time = time.time()
                             
-                            # Add to buffer without unnecessary copying
-                            camera_instance.buffer.append({
+                            # Start timing measurement for buffer add
+                            buffer_measurement_id = None
+                            if timing_collector:
+                                buffer_measurement_id = timing_collector.start_measurement(
+                                    "buffer_add", 
+                                    {"buffer_size_before": buffer_size_before, "frame_index": frames_captured}
+                                )
+                            
+                            # Add to buffer with sequential index for memory analysis
+                            buffer_index = len(camera_instance.buffer)
+                            buffer_entry = {
                                 "image": image_enhanced,  # Direct reference for better performance
-                                "timestamp": time.time()
-                            })
+                                "timestamp": current_time,
+                                "index": buffer_index  # Sequential index for memory analysis
+                            }
+                            camera_instance.buffer.append(buffer_entry)
+                            
+                            # Trigger memory analysis if available
+                            if hasattr(camera_instance, 'buffer_manager') and hasattr(camera_instance.buffer_manager, '_on_buffer_image_added'):
+                                try:
+                                    camera_instance.buffer_manager._on_buffer_image_added(
+                                        image_enhanced, current_time, buffer_index
+                                    )
+                                except Exception as analysis_error:
+                                    logger.debug(f"Memory analysis not available: {analysis_error}")
                             
                             frames_captured += 1
+                            
+                            # End timing measurement for buffer add
+                            if timing_collector and buffer_measurement_id:
+                                timing_collector.end_measurement("buffer_add", buffer_measurement_id)
                             
                             # Reduced logging frequency for better performance
                             now = time.time()
@@ -132,6 +189,10 @@ def grab_loop(camera_instance, stop_event, grab_lock, lock, frame_grabber, image
                     # Track performance metrics
                     grab_time = time.time() - start_time
                     PERFORMANCE_METRICS['frame_grab_time'].append(grab_time)
+                    
+                    # End timing measurement for frame grab
+                    if timing_collector and grab_measurement_id:
+                        timing_collector.end_measurement("frame_grab", grab_measurement_id)
                     
                 else:
                     # Handle grab failure with minimal overhead

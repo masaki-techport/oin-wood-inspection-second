@@ -9,6 +9,8 @@ CREATE TABLE t_inspection_result (
   live_knot     BOOLEAN NOT NULL DEFAULT FALSE COMMENT '流れ節_生 (4)',
   tight_knot    BOOLEAN NOT NULL DEFAULT FALSE COMMENT '生き節 (5)',
   length        FLOAT DEFAULT NULL COMMENT '欠点の長さ（mm）',
+  create_dt     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
+  update_dt     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
 
   PRIMARY KEY (inspection_id),
   CONSTRAINT FK_inspection_result_id

@@ -4,3 +4,4 @@ export * from './useSensorMonitoring';
 export * from './useDebugMode';
 export * from './useCameraSettings';
 export * from './useInspectionSettings';
+export * from './useBrowserNavigation';

@@ -5,6 +5,7 @@ import time
 import os
 from datetime import datetime
 import cv2
+import logging
 
 class AbstractCamera(ABC):
     """
@@ -17,19 +18,20 @@ class AbstractCamera(ABC):
         """Initialize dummy camera for fallback use"""
         self.connected = False
         self.mode = 'snapshot'
-        self.save_directory = 'data/images/fallback'
-        print("[DUMMY_CAMERA] Initialized dummy camera")
+        from __init__ import ROOT_DIR
+        self.save_directory = os.path.join(ROOT_DIR, 'data', 'images', 'fallback')
+        logging.getLogger(__name__).info("Initialized dummy camera")
     
     def connect(self) -> bool:
         """Connect to dummy camera"""
         self.connected = True
-        print("[DUMMY_CAMERA] Connected to dummy camera")
+        logging.getLogger(__name__).info("Connected to dummy camera")
         return True
     
     def disconnect(self) -> bool:
         """Disconnect from dummy camera"""
         self.connected = False
-        print("[DUMMY_CAMERA] Disconnected from dummy camera")
+        logging.getLogger(__name__).info("Disconnected from dummy camera")
         return True
     
     def is_connected(self) -> bool:
@@ -39,7 +41,7 @@ class AbstractCamera(ABC):
     def set_mode(self, mode: str) -> None:
         """Set dummy camera mode"""
         self.mode = mode
-        print(f"[DUMMY_CAMERA] Set mode to {mode}")
+        logging.getLogger(__name__).debug(f"Set mode to {mode}")
     
     def get_frame(self) -> dict:
         """Get a dummy frame (black image)"""
@@ -78,11 +80,11 @@ class AbstractCamera(ABC):
         
         # Save image
         cv2.imwrite(full_path, frame)
-        print(f"[DUMMY_CAMERA] Saved dummy frame to {full_path}")
+        logging.getLogger(__name__).info(f"Saved dummy frame to {full_path}")
         return full_path
     
     def set_params(self, params: dict) -> None:
         """Set dummy camera parameters"""
         if 'SaveDirectory' in params:
             self.save_directory = params['SaveDirectory']
-        print(f"[DUMMY_CAMERA] Set parameters: {params}")
+        logging.getLogger(__name__).debug(f"Set parameters: {params}")

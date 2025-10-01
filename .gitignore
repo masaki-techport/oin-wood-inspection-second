@@ -139,3 +139,4 @@ dist
 src-api/data/sqlite.db-shm
 src-api/data/sqlite.db-wal
 src-api/source/data/images/inspection/
+src-api/data/

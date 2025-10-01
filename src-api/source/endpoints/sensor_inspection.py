@@ -11,6 +11,7 @@ import traceback
 import gc
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
+import logging
 from sqlalchemy.orm import Session
 
 # Fix imports for sensor modules
@@ -21,8 +22,16 @@ from sensor_monitor import SensorMonitor
 from sensor_state_machine import SensorStateMachine
 from camera_buffer import SensorTriggeredCapture
 from camera.webcam_camera import WebcamCamera
-from camera.basler import BaslerCamera
 from camera.base import AbstractCamera
+
+# Optional import for Basler camera
+try:
+    from camera.basler import BaslerCamera
+    BASLER_AVAILABLE = True
+except ImportError:
+    print("[WARNING] Basler camera not available in sensor_inspection - pypylon not installed")
+    BaslerCamera = None
+    BASLER_AVAILABLE = False
 from app_config import app_config
 from camera_manager import camera_manager
 from dependencies import get_session
@@ -30,6 +39,7 @@ from db.inspection_result import InspectionResult
 
 # Import streaming services
 from streaming.sensor_sse import sensor_broadcaster, broadcast_sensor_status, broadcast_sensor_event
+from services import memory_image_cache
 
 router = APIRouter()
 
@@ -59,15 +69,18 @@ STATUS_MAPPING = {
     "STOPPED": "停止"
 }
 
-# Print debug messages only if debug mode is enabled
+logger = logging.getLogger(__name__)
+
+# Logging helpers honoring DEBUG_MODE
 def debug_print(message: str):
-    """Print debug message only if debug mode is enabled"""
     if DEBUG_MODE:
-        print(f"[DEBUG] {message}")
+        logger.debug(message)
 
 def info_print(message: str):
-    """Print info message (always shown)"""
-    print(f"[SENSOR_INSPECTION] {message}")
+    logger.info(message)
+
+def error_print(message: str):
+    logger.error(message)
 
 # Try to load configuration from file
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'sensor_config.yaml')
@@ -86,6 +99,205 @@ try:
                 info_print(f"Loaded configuration from {CONFIG_FILE}")
 except Exception as e:
     info_print(f"Error loading config: {e}")
+
+
+def _dispatch_frontend_clear_event():
+    """Dispatch frontend clear event to trigger UI clearing"""
+    try:
+        # Import SSE broadcaster to send clear event to frontend
+        from streaming.sensor_sse import broadcast_sensor_event
+        import asyncio
+        
+        # Create clear event data
+        clear_event_data = {
+            "event_type": "inspection_clear",
+            "message": "Inspection results cleared for new cycle",
+            "timestamp": time.time(),
+            "clear_requested": True
+        }
+        
+        # Dispatch the event asynchronously (non-blocking)
+        def dispatch_async():
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(broadcast_sensor_event("inspection-clear", clear_event_data))
+                loop.close()
+            except Exception as e:
+                debug_print(f"Error dispatching frontend clear event: {e}")
+        
+        import threading
+        clear_thread = threading.Thread(target=dispatch_async, daemon=True)
+        clear_thread.start()
+        
+        info_print("🔵 Dispatched frontend clear event for UI clearing")
+        
+    except Exception as e:
+        debug_print(f"Error dispatching frontend clear event: {e}")
+
+
+def _clear_ui_immediately():
+    """Clear UI components immediately for instant visual feedback - PHASE 1"""
+    try:
+        start_time = time.time()
+        info_print("⚡ IMMEDIATE UI clearing - Phase 1")
+        
+        # Dispatch frontend clear event first
+        _dispatch_frontend_clear_event()
+        
+        # Clear only the most critical UI components that affect visual display
+        cleared_components = []
+        
+        # 1. Clear camera inspection results (affects UI display)
+        if current_camera and hasattr(current_camera, 'last_inspection_results'):
+            current_camera.last_inspection_results = None
+            cleared_components.append("camera_results")
+            
+            # Also clear any cached inspection_id references
+            if hasattr(current_camera, 'inspection_id'):
+                current_camera.inspection_id = None
+                cleared_components.append("camera_inspection_id")
+        
+        # 2. Clear temp sections (affects image display A-E)
+        if current_camera and hasattr(current_camera, 'buffer_manager') and current_camera.buffer_manager:
+            if hasattr(current_camera.buffer_manager, 'temp_section_assembler') and current_camera.buffer_manager.temp_section_assembler:
+                current_camera.buffer_manager.temp_section_assembler.reset()
+                cleared_components.append("temp_sections")
+                info_print("✅ Cleared temp sections (inspection results from A-E frames)")
+        
+        # 3. Clear sensor capture data (affects UI state)
+        if sensor_capture and hasattr(sensor_capture, 'clear_inspection_results'):
+            sensor_capture.clear_inspection_results()
+            cleared_components.append("sensor_capture")
+        
+        # 4. Clear clear_requested flag
+        if sensor_monitor and hasattr(sensor_monitor, 'status_tracker'):
+            sensor_monitor.status_tracker.clear_requested_flag()
+            cleared_components.append("clear_flag")
+        
+        elapsed_time = (time.time() - start_time) * 1000
+        info_print(f"⚡ IMMEDIATE clear completed in {elapsed_time:.1f}ms: {', '.join(cleared_components)}")
+        
+        return elapsed_time
+        
+    except Exception as e:
+        error_print(f"Error in immediate UI clearing: {e}")
+        return 0
+
+
+def _clear_background_data():
+    """Clear background data and caches - PHASE 2 (non-blocking)"""
+    try:
+        info_print("🔄 Background data clearing - Phase 2")
+        start_time = time.time()
+        
+        # Use threading to clear heavy components in background
+        import threading
+        import concurrent.futures
+        
+        def clear_buffer_manager_data():
+            """Clear buffer manager data"""
+            cleared = []
+            if current_camera and hasattr(current_camera, 'buffer_manager') and current_camera.buffer_manager:
+                buffer_manager = current_camera.buffer_manager
+                
+                # Clear results storage
+                if hasattr(buffer_manager, 'results_storage') and buffer_manager.results_storage:
+                    if hasattr(buffer_manager.results_storage, 'clear_all'):
+                        buffer_manager.results_storage.clear_all()
+                        cleared.append("results_storage")
+                
+                # Clear analysis queue
+                if hasattr(buffer_manager, 'analysis_queue') and buffer_manager.analysis_queue:
+                    if hasattr(buffer_manager.analysis_queue, 'reset'):
+                        buffer_manager.analysis_queue.reset()
+                        cleared.append("analysis_queue")
+                
+                # Clear result cache
+                if hasattr(buffer_manager, 'result_cache') and buffer_manager.result_cache:
+                    if hasattr(buffer_manager.result_cache, 'clear'):
+                        buffer_manager.result_cache.clear()
+                        cleared.append("result_cache")
+                
+                # Clear buffer manager inspection results
+                if hasattr(buffer_manager, 'last_inspection_results'):
+                    buffer_manager.last_inspection_results = None
+                    cleared.append("buffer_manager_inspection_results")
+            
+            return cleared
+        
+        def clear_memory_cache():
+            """Clear memory image cache"""
+            try:
+                memory_image_cache.clear_all()
+                return "memory_image_cache"
+            except Exception as cache_err:
+                debug_print(f"Failed to clear memory image cache: {cache_err}")
+                return None
+        
+        def clear_camera_cached_data():
+            """Clear camera cached data"""
+            cleared = []
+            if current_camera:
+                # Clear cached inspection data
+                if hasattr(current_camera, 'cached_inspection_results'):
+                    current_camera.cached_inspection_results = None
+                if hasattr(current_camera, 'inspection_data'):
+                    current_camera.inspection_data = None
+                    cleared.append("camera_cached_data")
+            return cleared
+        
+        # Execute background clearing operations in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            # Submit background clearing tasks
+            futures = [
+                executor.submit(clear_buffer_manager_data),
+                executor.submit(clear_memory_cache),
+                executor.submit(clear_camera_cached_data)
+            ]
+            
+            # Collect results
+            cleared_components = []
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    result = future.result()
+                    if result:
+                        if isinstance(result, list):
+                            cleared_components.extend(result)
+                        else:
+                            cleared_components.append(result)
+                except Exception as e:
+                    debug_print(f"Error in background clear operation: {e}")
+        
+        elapsed_time = (time.time() - start_time) * 1000
+        info_print(f"🔄 Background clear completed in {elapsed_time:.1f}ms: {', '.join(cleared_components)}")
+        
+    except Exception as e:
+        error_print(f"Error in background clearing: {e}")
+
+
+def _clear_all_ui_components():
+    """Clear all UI components - IMMEDIATE + BACKGROUND approach"""
+    try:
+        info_print("🧹 Clearing all UI components for new inspection cycle")
+        
+        # PHASE 1: Immediate UI clearing (blocking, fast)
+        immediate_time = _clear_ui_immediately()
+        
+        # PHASE 2: Background data clearing (non-blocking)
+        import threading
+        background_thread = threading.Thread(
+            target=_clear_background_data,
+            daemon=True
+        )
+        background_thread.start()
+        
+        info_print(f"🎉 UI clearing initiated - immediate: {immediate_time:.1f}ms, background: async")
+        
+    except Exception as e:
+        error_print(f"Error clearing UI components: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def cleanup_resources():
@@ -152,6 +364,13 @@ async def start_sensor_inspection(request: StartInspectionRequest):
         
         # Clean up all existing resources (except camera type preference)
         cleanup_resources()
+
+        # Clear in-memory presentation previews when starting a new inspection
+        try:
+            memory_image_cache.clear_all()
+            info_print("Cleared in-memory image preview cache for new inspection")
+        except Exception as cache_err:
+            debug_print(f"Failed to clear memory preview cache: {cache_err}")
             
         # Use the camera manager to get a camera instance
         debug_print(f"Getting camera of type {camera_type} from camera manager")
@@ -188,6 +407,15 @@ async def start_sensor_inspection(request: StartInspectionRequest):
         if not camera_connected:
             info_print(f"Warning: {camera_type} camera connection failed, continuing in simulation-only mode")
         
+        # Reset temporary sections for a clean start of new inspection
+        try:
+            if hasattr(current_camera, 'buffer_manager') and current_camera.buffer_manager and \
+               getattr(current_camera.buffer_manager, 'temp_section_assembler', None):
+                current_camera.buffer_manager.temp_section_assembler.reset()
+                info_print("TempSectionAssembler reset for new inspection start")
+        except Exception as reset_err:
+            debug_print(f"TempSectionAssembler reset failed: {reset_err}")
+
         # Initialize sensor-triggered capture system - this should work even with a non-connected camera
         try:
             debug_print(f"Initializing SensorTriggeredCapture with {camera_type} camera")
@@ -284,10 +512,55 @@ async def start_sensor_inspection(request: StartInspectionRequest):
             if sensor_capture is None:
                 raise ValueError("sensor_capture is None. Cannot start monitoring.")
             debug_print(f"sensor_capture attributes: {dir(sensor_capture)}")
-            sensor_monitor.start_monitoring(sensor_capture.handle_sensor_decision)
+            
+            # Create a combined callback that handles both sensor decisions and camera triggering
+            def combined_sensor_callback(result: Optional[str], state: str):
+                """Combined callback for sensor decisions and camera triggering"""
+                try:
+                    # Handle clear results signal for new inspection cycle
+                    if result == "CLEAR_RESULTS":
+                        # IMMEDIATE UI clearing for instant visual feedback
+                        info_print(f"🔵 CLEAR_RESULTS with state={state} - IMMEDIATE UI clearing")
+                        immediate_time = _clear_ui_immediately()
+                        
+                        # Start background clearing in separate thread (non-blocking)
+                        import threading
+                        background_thread = threading.Thread(
+                            target=_clear_background_data,
+                            daemon=True
+                        )
+                        background_thread.start()
+                        
+                        info_print(f"🔵 CLEAR_RESULTS completed in {immediate_time:.1f}ms - UI cleared immediately")
+                        
+                        # CRITICAL: Start capture and analysis immediately after UI clearing
+                        # Call handle_sensor_decision with None result to trigger recording start
+                        info_print(f"🔵 Starting capture and analysis for state={state}")
+                        sensor_capture.handle_sensor_decision(None, state)
+                        
+                        info_print(f"🔵 CLEAR_RESULTS with state={state} - capture and analysis started")
+                    else:
+                        # Handle normal sensor decision (original logic)
+                        info_print(f"🔵 SENSOR CALLBACK: result={result}, state={state}")
+                        sensor_capture.handle_sensor_decision(result, state)
+                    
+                    # If sensor detects PASS_L_TO_R, start camera capturing
+                    if result == "pass_L_to_R":
+                        info_print("Sensor detected PASS_L_TO_R - starting camera capture")
+                        if hasattr(sensor_capture, 'start_sensor_triggered_capture'):
+                            sensor_capture.start_sensor_triggered_capture()
+                        else:
+                            info_print("Warning: sensor_capture does not have start_sensor_triggered_capture method")
+                            
+                except Exception as e:
+                    info_print(f"Error in combined sensor callback: {e}")
+                    if DEBUG_MODE:
+                        traceback.print_exc()
+            
+            sensor_monitor.start_monitoring(combined_sensor_callback)
             debug_print("Started sensor monitor successfully")
-            sensor_capture.start_monitoring()  # Set to inspection mode
-            debug_print("Started sensor capture monitoring")
+            sensor_capture.start_monitoring()  # Prepare system but don't start capturing
+            debug_print("Prepared sensor capture system - waiting for sensor triggers")
         except Exception as start_error:
             info_print(f"Error starting monitoring: {start_error}")
             if DEBUG_MODE:
@@ -378,6 +651,74 @@ async def stop_sensor_inspection():
         )
 
 
+@router.post("/sensor-inspection/clear-flag")
+async def clear_sensor_flag():
+    """Clear the clear_requested flag after processing"""
+    global sensor_monitor
+    
+    try:
+        if sensor_monitor and hasattr(sensor_monitor, 'status_tracker'):
+            sensor_monitor.status_tracker.clear_requested_flag()
+            return {"status": "success", "message": "Flag cleared"}
+        else:
+            return {"status": "error", "message": "Sensor monitor not available"}
+    except Exception as e:
+        debug_print(f"Error clearing flag: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@router.post("/sensor-inspection/clear-all-ui")
+async def clear_all_ui_components():
+    """Clear all UI components - IMMEDIATE + BACKGROUND approach"""
+    try:
+        info_print("🧹 API: Clearing all UI components with immediate + background approach")
+        
+        # Use the new immediate + background clearing approach
+        _clear_all_ui_components()
+        
+        return {
+            "status": "success", 
+            "message": "All UI components cleared successfully (immediate + background)",
+            "timestamp": time.time()
+        }
+        
+    except Exception as e:
+        error_print(f"Error clearing all UI components: {e}")
+        return {
+            "status": "error", 
+            "message": f"Failed to clear UI components: {str(e)}",
+            "timestamp": time.time()
+        }
+
+
+@router.post("/sensor-inspection/clear-ui-fast")
+async def clear_ui_fast():
+    """Fast UI clearing - only clears essential UI data for immediate response"""
+    try:
+        info_print("⚡ Fast UI clearing - using immediate clearing approach")
+        
+        # Dispatch frontend clear event first
+        _dispatch_frontend_clear_event()
+        
+        # Use the immediate clearing function for fastest response
+        immediate_time = _clear_ui_immediately()
+        
+        return {
+            "status": "success",
+            "message": f"Fast UI clearing completed in {immediate_time:.1f}ms",
+            "cleared_components": ["camera_results", "temp_sections", "sensor_capture", "clear_flag"],
+            "timestamp": time.time()
+        }
+        
+    except Exception as e:
+        error_print(f"Error in fast UI clearing: {e}")
+        return {
+            "status": "error",
+            "message": f"Fast UI clearing failed: {str(e)}",
+            "timestamp": time.time()
+        }
+
+
 @router.get("/sensor-inspection/status")
 async def get_sensor_inspection_status():
     """Get current sensor inspection status with real-time state machine updates"""
@@ -385,7 +726,7 @@ async def get_sensor_inspection_status():
     
     try:
         if not sensor_monitor or not sensor_capture:
-            info_print("[STATUS] Sensor inspection not active - no monitor or capture")
+            debug_print("[STATUS] Sensor inspection not active - no monitor or capture")
             inactive_status = {
                 "active": False,
                 "message": "Sensor inspection not active",
@@ -420,7 +761,7 @@ async def get_sensor_inspection_status():
         # Add timestamps for monitoring response times
         current_time = time.time()
         last_update_diff = round((current_time - sensor_status["last_update_time"]) * 1000, 2) if "last_update_time" in sensor_status else None
-        info_print(f"[STATUS] Active - Camera: {current_camera_type}, Sensors: A={sensor_status['sensor_a']}, B={sensor_status['sensor_b']}, " 
+        debug_print(f"[STATUS] Active - Camera: {current_camera_type}, Sensors: A={sensor_status['sensor_a']}, B={sensor_status['sensor_b']}, " 
               f"State={sensor_status['current_state']}, LastResult={sensor_status['last_result']}, "
               f"Update: {last_update_diff}ms ago")
         
@@ -449,13 +790,25 @@ async def get_sensor_inspection_status():
             except Exception as e:
                 debug_print(f"Error getting camera status: {e}")
                 
+        # Check if clearing is requested first
+        clear_requested = sensor_status.get("clear_requested", False)
+        
         # Use camera status inspection data if available, otherwise try direct camera access
-        if not inspection_data and current_camera and hasattr(current_camera, 'last_inspection_results'):
-            inspection_data = current_camera.last_inspection_results
-            
-        # Fetch fresh inspection results from database if we have an inspection_id
+        # BUT only if clearing is not requested
+        if not clear_requested:
+            if not inspection_data and current_camera and hasattr(current_camera, 'last_inspection_results'):
+                inspection_data = current_camera.last_inspection_results
+        else:
+            # When clearing is requested, ensure inspection_data is None
+            inspection_data = None
+            debug_print("[STATUS] Clear requested - setting inspection_data to None")
+        
+        # Fetch fresh inspection results from database ONLY for forward pass results
+        # Guard: skip hydration for reverse/returns/timeouts/errors
         inspection_results = None
-        if inspection_data and inspection_data.get('inspection_id'):
+        last_result = sensor_status.get('last_result')
+        is_forward_pass = last_result == 'pass_L_to_R'
+        if not clear_requested and is_forward_pass and inspection_data and inspection_data.get('inspection_id'):
             try:
                 from db.engine import SessionLocal
                 from db.inspection_result import InspectionResult
@@ -480,19 +833,36 @@ async def get_sensor_inspection_status():
                     else:
                         debug_print(f"[STATUS] No inspection results found in database for ID {inspection_data['inspection_id']}")
             except Exception as e:
-                debug_print(f"[STATUS] Error fetching fresh inspection results: {e}")
+                error_print(f"[STATUS] Error fetching fresh inspection results: {e}")
+        elif clear_requested:
+            debug_print("[STATUS] Clear requested - skipping database fetch for inspection results")
+        elif not is_forward_pass:
+            debug_print(f"[STATUS] Non-forward result '{last_result}' - skipping database fetch for inspection results")
             
         # Debug logging for inspection data
         if inspection_data:
-            info_print(f"[STATUS] Including inspection data in response: inspection_id={inspection_data.get('inspection_id')}")
-            # Ensure inspection_details is always preserved in the response
-            if 'inspection_details' not in inspection_data and hasattr(current_camera, 'last_inspection_results') and current_camera.last_inspection_results:
-                if 'inspection_details' in current_camera.last_inspection_results:
-                    inspection_data['inspection_details'] = current_camera.last_inspection_results['inspection_details']
-                    info_print(f"[STATUS] Preserved inspection_details from previous data")
+            debug_print(f"[STATUS] Including inspection data in response: inspection_id={inspection_data.get('inspection_id')}")
+            # Do NOT preserve previous inspection_details when a clear has been requested
+            if not sensor_status.get("clear_requested", False):
+                if 'inspection_details' not in inspection_data and hasattr(current_camera, 'last_inspection_results') and current_camera.last_inspection_results:
+                    if 'inspection_details' in current_camera.last_inspection_results:
+                        inspection_data['inspection_details'] = current_camera.last_inspection_results['inspection_details']
+                        debug_print(f"[STATUS] Preserved inspection_details from previous data")
         else:
             debug_print(f"[STATUS] No inspection data available from camera")
             
+        # Check if clearing is requested - if so, don't include inspection data
+        clear_requested = sensor_status.get("clear_requested", False)
+        
+        # When clearing or non-forward result, ensure data is null to keep UI clear
+        if clear_requested or not is_forward_pass:
+            inspection_data = None
+            inspection_results = None
+            if clear_requested:
+                debug_print("[STATUS] Clear requested - setting all inspection data to null")
+            else:
+                debug_print(f"[STATUS] Non-forward result '{last_result}' - clearing inspection data/results for UI")
+        
         status_response = {
             "active": True,
             "camera_type": current_camera_type,  # Add camera type to status response
@@ -503,10 +873,11 @@ async def get_sensor_inspection_status():
                 "current_state": sensor_status["current_state"],
                 "last_result": sensor_status["last_result"],
                 "last_update_time": sensor_status["last_update_time"],
-                "update_age_ms": last_update_diff
+                "update_age_ms": last_update_diff,
+                "clear_requested": clear_requested
             },
-            "inspection_data": inspection_data,
-            "inspection_results": inspection_results,  # Include fresh inspection results from database
+            "inspection_data": inspection_data,  # Will be None if clear_requested
+            "inspection_results": inspection_results,  # Will be None if clear_requested
             "camera_status": camera_status,  # Include full camera status for debugging
             "capture": {
                 "status": ui_status,  # Use mapped status for UI
@@ -537,7 +908,7 @@ async def get_sensor_inspection_status():
         return status_response
         
     except Exception as e:
-        info_print(f"[STATUS] Error getting status: {e}")
+        error_print(f"[STATUS] Error getting status: {e}")
         traceback.print_exc()
         return JSONResponse(
             status_code=500,
@@ -701,9 +1072,12 @@ def update_sensor_configuration(
         
     # Save configuration to file
     try:
+        # Resolve base directory to absolute path under src-api/data/images/inspection
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        abs_inspection_dir = os.path.join(root_dir, "data", "images", "inspection")
         config = {
             "dio": {
-                "device_name": "DIO001",
+                "device_name": "DIO000",
                 "simulation_mode": SENSOR_SIMULATION_MODE,
                 "bit_a": 0,
                 "bit_b": 1
@@ -713,7 +1087,7 @@ def update_sensor_configuration(
                 "fps": BUFFER_FPS
             },
             "save": {
-                "base_directory": "data/images/inspection",
+                "base_directory": abs_inspection_dir,
                 "format": "jpg",
                 "quality": 95
             }

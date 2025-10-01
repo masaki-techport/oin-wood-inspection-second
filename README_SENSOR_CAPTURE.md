@@ -165,7 +165,7 @@ The system provides the following API endpoints:
 src-api/
 ├── source/
 │   ├── camera/                # Camera interfaces
-│   │   ├── basler_camera.py   # Basler camera implementation
+│   │   ├── basler/            # Modular Basler camera implementation
 │   │   └── webcam_camera.py   # Webcam camera implementation
 │   ├── camera_buffer.py       # Image buffering system
 │   ├── sensor_monitor.py      # Sensor monitoring system

@@ -258,7 +258,7 @@ class ResourceOptimizer:
         if state.memory_percent > self.config.memory_critical_threshold:
             # Critical memory usage - aggressive throttling
             self.performance_metrics['memory_throttles'] += 1
-            logger.warning(f"Critical memory usage: {state.memory_percent:.1f}% - applying aggressive throttling")
+            logger.debug(f"Critical memory usage: {state.memory_percent:.1f}% - applying aggressive throttling")
         elif state.memory_percent > self.config.memory_high_threshold:
             # High memory usage - moderate throttling
             self.performance_metrics['memory_throttles'] += 1

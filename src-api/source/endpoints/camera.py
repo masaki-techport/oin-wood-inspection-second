@@ -3,18 +3,30 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 import base64
 import cv2
-from camera.basler import BaslerCamera
 from camera_manager import camera_manager
+import logging
+
+# Optional import for Basler camera
+try:
+    from camera.basler import BaslerCamera
+    BASLER_AVAILABLE = True
+except ImportError:
+    logging.getLogger(__name__).warning("Basler camera not available - pypylon not installed")
+    BaslerCamera = None
+    BASLER_AVAILABLE = False
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 # Use camera manager instead of direct instantiation
 camera_id = "camera_endpoint"
 
 @router.post("/camera/connect")
 def connect_camera():
+    logger.info("Camera connect request received")
     # Get camera from manager
     camera = camera_manager.get_camera("basler", camera_id)
     success = camera.is_connected()
+    logger.info(f"Connection status: {'Connected' if success else 'Not connected'}")
     return {
         "connected": success,
         "message": "Camera connected successfully" if success else "No camera detected - running in development mode"
@@ -22,15 +34,25 @@ def connect_camera():
 
 @router.post("/camera/disconnect")
 def disconnect_camera():
+    logger.info("Camera disconnect request received")
     # Release camera from manager
     camera_manager.release_camera(camera_id)
+    logger.info("Camera disconnected successfully")
     return {"disconnected": True}
 
 @router.get("/camera/is_connected")
 def check_camera_connection():
+    logger.debug("Checking camera connection status")
     status = camera_manager.get_status()
-    is_connected = status["is_connected"] and status["active_camera_type"] == "basler"
-    return {"connected": is_connected}
+    is_connected = status["is_connected"]
+    logger.info(f"Connection check result: {'Connected' if is_connected else 'Disconnected'}")
+    logger.debug(f"Camera details: Type={status['active_camera_type']}, Class={status['actual_camera_class']}")
+    return {
+        "connected": is_connected,
+        "camera_type": status["active_camera_type"],
+        "actual_camera_class": status["actual_camera_class"],
+        "development_mode": status["development_mode"]
+    }
 
 @router.post("/camera/start")
 def start_camera():
@@ -70,44 +92,156 @@ def stop_camera():
 
 @router.get("/camera/snapshot")
 def get_snapshot():
+    """Get camera snapshot with improved timeout handling"""
+    import time
+    start_time = time.time()
+    
     try:
-        #Get camera from manager
-        camera = camera_manager.get_camera("basler", camera_id)
-            
-        if not camera.is_connected():
-                print("[BASLER] Camera not connected, returning empty image")
-                # Return empty image instead of error
-                return {"image": "", "error": "Camera not connected", "status": "disconnected"}
+        logger.info(f"Snapshot request received at {start_time}")
+        
+        # Get camera manager status to determine which camera to use
+        status = camera_manager.get_status()
+        logger.debug(f"Camera manager status: {status}")
 
-        frame = camera.get_frame()
-        if not frame:
-                print("[BASLER] Failed to grab image, returning empty image")
-                # Return empty image instead of error
-                return {"image": "", "error": "Failed to grab image", "status": "no_frame"}
-                
-        # Check if this is a fallback image
-        if "is_fallback" in frame and frame["is_fallback"]:
-                print("[BASLER] Using fallback image due to camera issues")
-                # We still have an image to display, so continue processing
+        # Quick timeout check - if no camera connected, return immediately
+        if not status["is_connected"]:
+            return {
+                "image": "",
+                "error": "No camera connected",
+                "status": "disconnected",
+                "camera_type": "none",
+                "response_time_ms": int((time.time() - start_time) * 1000)
+            }
 
-        # Get image from frame data (should always be "image" key in consolidated implementation)
-        if "image" in frame:
-            img = frame["image"]
+        # Determine which camera type to request
+        if status["development_mode"] and status["preferred_camera_type"] == "webcam":
+            requested_camera_type = "webcam"
         else:
-            print("[BASLER] Frame data doesn't contain image data")
-            return {"image": "", "error": "Invalid frame format", "status": "invalid_format"}
-            
-        # Convert RGB to BGR for OpenCV JPEG encoding (cv2.imencode expects BGR)
-        img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        _, buffer = cv2.imencode(".jpg", img_bgr)
-        base64_img = base64.b64encode(buffer).decode("utf-8")
-        return {"image": base64_img, "status": "ok"}
+            requested_camera_type = "basler"
+        
+        logger.info(f"Requesting {requested_camera_type} camera for snapshot")
+
+        # Try to get the requested camera type with timeout protection
+        camera_get_start = time.time()
+        try:
+            logger.debug(f"Getting {requested_camera_type} camera from manager...")
+            camera = camera_manager.get_camera(requested_camera_type, camera_id)
+            camera_type_used = requested_camera_type
+            camera_get_time = int((time.time() - camera_get_start) * 1000)
+            logger.info(f"Successfully obtained {camera_type_used} camera in {camera_get_time}ms")
+        except (ValueError, RuntimeError) as e:
+            # Return error response instead of fallback
+            error_time = int((time.time() - start_time) * 1000)
+            logger.error(f"Failed to get {requested_camera_type} camera: {e} (took {error_time}ms)")
+            return {
+                "image": "",
+                "error": f"Failed to connect to {requested_camera_type} camera: {str(e)}",
+                "status": "camera_connection_failed",
+                "camera_type": requested_camera_type,
+                "connection_error": True,
+                "response_time_ms": error_time
+            }
+
+        # Check connection status with timeout
+        if not camera.is_connected():
+            connection_check_time = int((time.time() - start_time) * 1000)
+            logger.error(f"{camera_type_used} camera not connected, returning empty image (took {connection_check_time}ms)")
+            return {
+                "image": "",
+                "error": f"{camera_type_used} camera not connected",
+                "status": "disconnected",
+                "camera_type": camera_type_used,
+                "response_time_ms": connection_check_time
+            }
+
+        # Capture frame with timeout monitoring
+        frame_start = time.time()
+        logger.debug(f"Capturing frame from {camera_type_used} camera...")
+        frame = camera.get_frame()
+        frame_time = int((time.time() - frame_start) * 1000)
+        
+        if not frame:
+            total_time = int((time.time() - start_time) * 1000)
+            logger.error(f"Failed to grab image from {camera_type_used}, frame capture took {frame_time}ms, total {total_time}ms")
+            return {
+                "image": "",
+                "error": "Failed to grab image",
+                "status": "no_frame",
+                "camera_type": camera_type_used,
+                "frame_capture_time_ms": frame_time,
+                "response_time_ms": total_time
+            }
+
+        # Handle different frame formats
+        img = None
+        if isinstance(frame, dict):
+            # Check if this is a fallback image
+            if "is_fallback" in frame and frame["is_fallback"]:
+                logger.info(f"Using fallback image from {camera_type_used}")
+
+            # Get image from frame data
+            if "image" in frame:
+                img = frame["image"]
+            elif "frame" in frame:
+                img = frame["frame"]
+            else:
+                logger.error(f"Frame data doesn't contain image data from {camera_type_used}")
+                return {
+                    "image": "",
+                    "error": "Invalid frame format",
+                    "status": "invalid_format",
+                    "camera_type": camera_type_used
+                }
+        else:
+            # Direct image array
+            img = frame
+
+        # Convert image to base64
+        if img is not None:
+            # Handle different color formats
+            if len(img.shape) == 3:
+                if img.shape[2] == 3:
+                    # RGB image - convert to BGR for OpenCV
+                    img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                else:
+                    # Already BGR
+                    img_bgr = img
+            else:
+                # Grayscale image
+                img_bgr = img
+
+            _, buffer = cv2.imencode(".jpg", img_bgr)
+            base64_img = base64.b64encode(buffer).decode("utf-8")
+
+            return {
+                "image": base64_img,
+                "status": "ok",
+                "camera_type": camera_type_used,
+                "actual_camera_class": camera.__class__.__name__,
+                "frame_capture_time_ms": frame_time,
+                "response_time_ms": int((time.time() - start_time) * 1000)
+            }
+        else:
+            total_time = int((time.time() - start_time) * 1000)
+            logger.error(f"No image data available from {camera_type_used} (total time: {total_time}ms)")
+            return {
+                "image": "",
+                "error": "No image data available",
+                "status": "no_image",
+                "camera_type": camera_type_used,
+                "response_time_ms": total_time
+            }
+
     except Exception as e:
-        print(f"[BASLER] Error in get_snapshot: {e}")
-        import traceback
-        traceback.print_exc()
-        # Return empty image instead of error
-        return {"image": "", "error": str(e), "status": "error"}
+        total_time = int((time.time() - start_time) * 1000)
+        logger.exception(f"Error in get_snapshot: {e} (total time: {total_time}ms)")
+        return {
+            "image": "",
+            "error": str(e),
+            "status": "error",
+            "camera_type": "unknown",
+            "response_time_ms": total_time
+        }
 
 @router.post("/camera/save")
 def save_image():
@@ -283,4 +417,116 @@ def update_parallel_config(config: dict):
         return JSONResponse(
             status_code=500,
             content={"error": f"Failed to update configuration: {str(e)}"}
+        )
+
+@router.get("/camera/manager/status")
+def get_camera_manager_status():
+    """Get detailed camera manager status."""
+    try:
+        status = camera_manager.get_status()
+        return {
+            "success": True,
+            "status": status
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to get camera manager status: {str(e)}"}
+        )
+
+@router.post("/camera/manager/development_mode")
+def set_development_mode(config: dict):
+    """Enable or disable development mode."""
+    try:
+        if "enabled" not in config:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Missing 'enabled' parameter"}
+            )
+
+        camera_manager.set_development_mode(config["enabled"])
+
+        return {
+            "success": True,
+            "message": f"Development mode {'enabled' if config['enabled'] else 'disabled'}",
+            "development_mode": config["enabled"]
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to set development mode: {str(e)}"}
+        )
+
+@router.post("/camera/manager/switch_camera")
+def switch_camera_type(config: dict):
+    """Switch to a specific camera type."""
+    try:
+        if "camera_type" not in config:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Missing 'camera_type' parameter"}
+            )
+
+        camera_type = config["camera_type"]
+        if camera_type not in ["basler", "webcam"]:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "camera_type must be 'basler' or 'webcam'"}
+            )
+
+        # Force switch to the specified camera type
+        try:
+            camera = camera_manager.force_camera_type(camera_type, f"{camera_id}_switch")
+
+            # Get updated status
+            status = camera_manager.get_status()
+
+            return {
+                "success": True,
+                "message": f"Successfully switched to {camera_type} camera",
+                "status": status
+            }
+        except (ValueError, RuntimeError) as e:
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "error": f"Failed to connect to {camera_type} camera",
+                    "details": str(e),
+                    "camera_type": camera_type,
+                    "connection_error": True
+                }
+            )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Unexpected error: {str(e)}"}
+        )
+
+@router.post("/camera/manager/preferred_camera")
+def set_preferred_camera_type(config: dict):
+    """Set preferred camera type for development mode."""
+    try:
+        if "camera_type" not in config:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Missing 'camera_type' parameter"}
+            )
+
+        camera_type = config["camera_type"]
+        camera_manager.set_preferred_camera_type(camera_type)
+
+        return {
+            "success": True,
+            "message": f"Preferred camera type set to {camera_type}",
+            "preferred_camera_type": camera_type
+        }
+    except ValueError as e:
+        return JSONResponse(
+            status_code=400,
+            content={"error": str(e)}
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to set preferred camera type: {str(e)}"}
         )

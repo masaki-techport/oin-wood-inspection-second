@@ -68,30 +68,30 @@ const createCameraConfig = (): CameraConfig => {
     basler: {
       apiBaseUrl,
       endpoints: {
-        connect: '/api/camera/connect',
-        disconnect: '/api/camera/disconnect',
-        start: '/api/camera/start',
-        stop: '/api/camera/stop',
-        snapshot: '/api/camera/snapshot',
-        isConnected: '/api/camera/is_connected',
+        connect: '/camera/connect',
+        disconnect: '/camera/disconnect',
+        start: '/camera/start',
+        stop: '/camera/stop',
+        snapshot: '/camera/snapshot',
+        isConnected: '/camera/is_connected',
       },
-      pollInterval: 100, // milliseconds
+      pollInterval: 200, // Reduced from 100ms to 200ms for better stability
     },
     
     webcam: {
       apiBaseUrl,
       endpoints: {
-        connect: '/api/webcam/connect',
-        disconnect: '/api/webcam/disconnect',
-        start: '/api/webcam/start',
-        stop: '/api/webcam/stop',
-        snapshot: '/api/webcam/snapshot',
-        isConnected: '/api/webcam/is_connected',
-        save: '/api/webcam/save',
-        listCameras: '/api/webcam/list_cameras',
-        setCameraIndex: '/api/webcam/set_camera_index',
+        connect: '/webcam/connect',
+        disconnect: '/webcam/disconnect',
+        start: '/webcam/start',
+        stop: '/webcam/stop',
+        snapshot: '/webcam/snapshot',
+        isConnected: '/webcam/is_connected',
+        save: '/webcam/save',
+        listCameras: '/webcam/list_cameras',
+        setCameraIndex: '/webcam/set_camera_index',
       },
-      pollInterval: 100, // milliseconds
+      pollInterval: 200, // Reduced from 100ms to 200ms for better stability
       constraints: {
         video: {
           width: { ideal: 1280 },
@@ -109,17 +109,17 @@ const createCameraConfig = (): CameraConfig => {
     usb: {
       apiBaseUrl,
       endpoints: {
-        connect: '/api/webcam/connect',
-        disconnect: '/api/webcam/disconnect',
-        start: '/api/webcam/start',
-        stop: '/api/webcam/stop',
-        snapshot: '/api/webcam/snapshot',
-        isConnected: '/api/webcam/is_connected',
-        save: '/api/webcam/save',
-        listCameras: '/api/webcam/list_cameras',
-        setCameraIndex: '/api/webcam/set_camera_index',
+        connect: '/webcam/connect',
+        disconnect: '/webcam/disconnect',
+        start: '/webcam/start',
+        stop: '/webcam/stop',
+        snapshot: '/webcam/snapshot',
+        isConnected: '/webcam/is_connected',
+        save: '/webcam/save',
+        listCameras: '/webcam/list_cameras',
+        setCameraIndex: '/webcam/set_camera_index',
       },
-      pollInterval: 100, // milliseconds
+      pollInterval: 200, // Reduced from 100ms to 200ms for better stability
       constraints: {
         video: {
           width: { ideal: 1920 },
