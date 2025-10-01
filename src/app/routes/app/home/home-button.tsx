@@ -9,9 +9,9 @@ const HomeListButton = () => {
     <div id="wrapper" className="flex flex-row h-full p-6 gap-6">
       {/* Left side - Large Rectangular Inspection Button */}
       <div className="flex items-center justify-center" style={{ width: '47%' }}>
-        <button 
-          onClick={() => navigate('/inspection')} 
-          style={{ backgroundColor: '#0f9ed5' }} 
+        <button
+          onClick={() => navigate('/inspection')}
+          style={{ backgroundColor: '#0f9ed5' }}
           className="flex flex-col items-center justify-center w-full h-full rounded-xl text-white shadow-md border-[3px] border-[#0a7ba7] hover:bg-[#0d8bc1] transition-colors"
         >
           <img src="/top-search.png" alt="検査" className="w-48 h-48 mb-10 invert" />
@@ -22,19 +22,19 @@ const HomeListButton = () => {
       {/* Right side - Rectangular buttons stacked vertically */}
       <div className="flex flex-col gap-4" style={{ width: '53%' }}>
         {/* Focus Adjustment Button */}
-        <button 
-          onClick={() => navigate('/camera-view')} 
-          style={{ backgroundColor: '#0f9ed5' }} 
+        <button
+          onClick={() => navigate('/camera-view')}
+          style={{ backgroundColor: '#0f9ed5' }}
           className="flex flex-row items-center justify-start h-[28%] rounded-xl text-white shadow-md border-[3px] border-[#0a7ba7] hover:bg-[#0d8bc1] transition-colors px-8"
         >
-          <img src="/top-camera.png" alt="ピント調整" className="w-24 h-24 mr-10"/>
+          <img src="/top-camera.png" alt="ピント調整" className="w-24 h-24 mr-10" />
           <span className="text-6xl font-bold">ピント調整</span>
         </button>
 
         {/* Inspection History Button */}
-        <button 
-          onClick={() => navigate('/inspection-history')} 
-          style={{ backgroundColor: '#0f9ed5' }} 
+        <button
+          onClick={() => navigate('/inspection-history')}
+          style={{ backgroundColor: '#0f9ed5' }}
           className="flex flex-row items-center justify-start h-[28%] rounded-xl text-white shadow-md border-[3px] border-[#0a7ba7] hover:bg-[#0d8bc1] transition-colors px-8"
         >
           <img src="/top-db.png" alt="検査履歴" className="w-24 h-24 mr-10" />
@@ -42,9 +42,9 @@ const HomeListButton = () => {
         </button>
 
         {/* Settings Button */}
-        <button 
-          onClick={() => navigate('/setting')} 
-          style={{ backgroundColor: '#0f9ed5' }} 
+        <button
+          onClick={() => navigate('/setting')}
+          style={{ backgroundColor: '#0f9ed5' }}
           className="flex flex-row items-center justify-start h-[28%] rounded-xl text-white shadow-md border-[3px] border-[#0a7ba7] hover:bg-[#0d8bc1] transition-colors px-8"
         >
           <div className="flex items-center justify-center w-24 h-24 mr-10">
@@ -57,9 +57,9 @@ const HomeListButton = () => {
 
         {/* Debug Mode Button - Hidden by default, only shows when debug mode is enabled */}
         {isDebugMode && (
-          <button 
-            onClick={() => navigate('/inference')} 
-            style={{ backgroundColor: '#e74c3c' }} 
+          <button
+            onClick={() => navigate('/inference')}
+            style={{ backgroundColor: '#e74c3c' }}
             className="flex flex-row items-center justify-center h-12 rounded-xl text-white shadow-md border-[3px] border-[#c0392b] hover:bg-[#c0392b] transition-colors px-4 mt-1"
           >
             <span className="text-lg font-bold">推論 (Debug)</span>

@@ -1,5 +1,3 @@
-import React from 'react';
-
 import { DefaultLayout } from '@/components/layouts';
 import HomeButton from './home-button';
 

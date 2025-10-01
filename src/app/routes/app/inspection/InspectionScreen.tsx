@@ -3,23 +3,22 @@ import InspectionDetailsModal from '@/components/modal/InspectionDetailsModal';
 import ResizableCameraModal from '@/components/modal/ResizableCameraModal';
 import useNavigate from '@/hooks/use-navigate';
 import BrowserNavigationDialog from './components/BrowserNavigationDialog';
-import { 
-  InspectionHeader, 
-  ControlPanel, 
-  InspectionDisplay, 
-  CameraPreview, 
-  DebugPanel 
+import {
+  InspectionHeader,
+  ControlPanel,
+  InspectionDisplay,
+  CameraPreview,
+  DebugPanel
 } from './components';
-import { 
-  useCameraManagement, 
-  useInspectionState, 
-  useSensorMonitoring, 
+import {
+  useCameraManagement,
+  useInspectionState,
+  useSensorMonitoring,
   useDebugMode,
   useCameraSettings,
   useBrowserNavigation
 } from './hooks';
 import { useStatusManager } from './hooks/useStatusManager';
-import { getImageUrl } from './utils';
 import { setSensorStatus, getUpdateInspectionResultFromSensorStatus } from './utils/stateManager';
 import ErrorBoundary from './components/ErrorBoundary';
 import DataConflictErrorBoundary from './components/DataConflictErrorBoundary';
@@ -43,46 +42,46 @@ const InspectionScreen: React.FC = () => {
   const { showCameraUI } = useCameraSettings();
 
   // Camera management hook - pass showCameraUI to control preview polling
-  const { 
-    image, 
-    isConnected, 
-    droppedFrame, 
-    selectedCameraType, 
+  const {
+    image,
+    isConnected,
+    droppedFrame,
+    selectedCameraType,
     handleCameraTypeChange,
     stopCamera
   } = useCameraManagement(showCameraUI);
 
   // Status manager hook - single source of truth for status
-  const { 
-    status, 
+  const {
+    status,
     updateStatusFromSensor
   } = useStatusManager();
 
   // Inspection state hook
-  const { 
-    inspectionResult, 
-    defectType, 
-    createdInspectionId, 
-    presentationImages, 
-    loadingPresentationImages, 
-    selectedInspection, 
-    showDetail, 
-    handleShowDetail, 
-    setShowDetail, 
+  const {
+    inspectionResult,
+    defectType,
+    createdInspectionId,
+    presentationImages,
+    loadingPresentationImages,
+    selectedInspection,
+    showDetail,
+    handleShowDetail,
+    setShowDetail,
     loadPresentationImages,
     clearInspectionResults
   } = useInspectionState();
 
   // Sensor monitoring hook
-  const { 
-    sensorStatus, 
-    aiThreshold, 
-    setAiThreshold, 
-    handleStart, 
-    handleStop, 
-    triggerTestSequence, 
-    toggleSensorA, 
-    toggleSensorB 
+  const {
+    sensorStatus,
+    aiThreshold,
+    setAiThreshold,
+    handleStart,
+    handleStop,
+    triggerTestSequence,
+    toggleSensorA,
+    toggleSensorB
   } = useSensorMonitoring(selectedCameraType);
 
   // Clear any stale last-inspection result on first open
@@ -112,13 +111,13 @@ const InspectionScreen: React.FC = () => {
     if (sensorStatus) {
       // Store sensor status in centralized state manager
       setSensorStatus(sensorStatus);
-      
+
       // Get the update function from state manager and call it
       const updateFunction = getUpdateInspectionResultFromSensorStatus();
       if (sensorStatus.inspection_data && updateFunction) {
         updateFunction(sensorStatus);
       }
-      
+
       // Update status using centralized status manager (includes immediate sensor detection)
       updateStatusFromSensor(sensorStatus);
     }
@@ -126,14 +125,14 @@ const InspectionScreen: React.FC = () => {
 
 
   // Debug mode hook
-  const { 
-    debugMode, 
+  const {
+    debugMode,
     showDebugPanel,
     setShowDebugPanel,
-    recentInspections, 
-    loadingInspections, 
-    loadRecentInspections, 
-    testImage 
+    recentInspections,
+    loadingInspections,
+    loadRecentInspections,
+    testImage
   } = useDebugMode();
 
   // We no longer force showDebugPanel to be true initially
@@ -146,13 +145,13 @@ const InspectionScreen: React.FC = () => {
   // Handle top button click with immediate feedback
   const handleTop = async () => {
     console.log('[INSPECTION] TOP button clicked - navigating to home');
-    
+
     // Set loading state immediately for instant feedback
     setIsNavigatingHome(true);
-    
+
     // Navigate immediately without waiting for camera to stop
     navigate('/');
-    
+
     // Stop camera in background (don't await to prevent blocking navigation)
     if (stopCamera) {
       stopCamera().catch((error) => {
@@ -160,7 +159,7 @@ const InspectionScreen: React.FC = () => {
       });
     }
   };
-  
+
   // Browser navigation handling
   const {
     showConfirmDialog,
@@ -172,7 +171,7 @@ const InspectionScreen: React.FC = () => {
     stopInspection: async () => {
       // First stop the inspection
       await handleStop();
-      
+
       // Then explicitly stop the camera
       if (stopCamera) {
         try {
@@ -184,32 +183,32 @@ const InspectionScreen: React.FC = () => {
       }
     }
   });
-  
+
   // Create a function to handle the back button press
   const handleBackButton = useCallback(() => {
     handleNavigationAction('back');
   }, [handleNavigationAction]);
-  
+
   // Create a function to handle the close button press
   const handleCloseButton = useCallback(() => {
     handleNavigationAction('close');
   }, [handleNavigationAction]);
-  
+
   // Create a function to handle the refresh button press
   const handleRefreshButton = useCallback(() => {
     handleNavigationAction('refresh');
   }, [handleNavigationAction]);
-  
+
   // Expose these handlers for external use
   useEffect(() => {
     (window as any).handleInspectionBackButton = handleBackButton;
     (window as any).handleInspectionCloseButton = handleCloseButton;
     (window as any).handleInspectionRefreshButton = handleRefreshButton;
-    
+
     // Add history entry when component mounts
     // This ensures the back button can be captured
     window.history.pushState({ inspectionScreen: true }, document.title, window.location.href);
-    
+
     return () => {
       delete (window as any).handleInspectionBackButton;
       delete (window as any).handleInspectionCloseButton;
@@ -343,7 +342,7 @@ const InspectionScreen: React.FC = () => {
           </>
         )}
       </div>
-      
+
       {/* Confirmation Dialog for browser navigation */}
       <BrowserNavigationDialog
         open={showConfirmDialog}

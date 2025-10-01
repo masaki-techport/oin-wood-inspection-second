@@ -17,7 +17,7 @@ export const createRouter = (queryClient: QueryClient) =>
     },
     {
       path: '/camera',
-      element: <CameraPage  />,
+      element: <CameraPage />,
     },
     {
       path: '/inspection',

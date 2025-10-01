@@ -44,7 +44,8 @@
   --aspect-video: 16/9;
   --aspect-photo: 4/3;
   --aspect-presentation: 5/4;
-  --aspect-wood-inspection: 4/3; /* 4:3 ratio for wood inspection images */
+  --aspect-wood-inspection: 4/3;
+  /* 4:3 ratio for wood inspection images */
 
   /* Modal sizing */
   --modal-width: min(95vw, 1600px);
@@ -77,13 +78,14 @@ code {
 
 /* Responsive Utility Classes */
 @layer utilities {
+
   /* Responsive containers */
   .container-responsive {
     width: 100%;
     margin: 0 auto;
     padding: var(--spacing-xs);
   }
-  
+
   /* Optimized container for inspection presentation - minimized padding for maximum space usage */
   .container-responsive.inspection-presentation-container {
     padding: var(--spacing-xs) var(--spacing-xs);
@@ -91,22 +93,62 @@ code {
   }
 
   /* Responsive spacing */
-  .spacing-xs { gap: var(--spacing-xs); }
-  .spacing-sm { gap: var(--spacing-sm); }
-  .spacing-md { gap: var(--spacing-md); }
-  .spacing-lg { gap: var(--spacing-lg); }
-  .spacing-xl { gap: var(--spacing-xl); }
-  .spacing-2xl { gap: var(--spacing-2xl); }
+  .spacing-xs {
+    gap: var(--spacing-xs);
+  }
+
+  .spacing-sm {
+    gap: var(--spacing-sm);
+  }
+
+  .spacing-md {
+    gap: var(--spacing-md);
+  }
+
+  .spacing-lg {
+    gap: var(--spacing-lg);
+  }
+
+  .spacing-xl {
+    gap: var(--spacing-xl);
+  }
+
+  .spacing-2xl {
+    gap: var(--spacing-2xl);
+  }
 
   /* Responsive text sizes */
-  .text-responsive-xs { font-size: var(--text-xs); }
-  .text-responsive-sm { font-size: var(--text-sm); }
-  .text-responsive-base { font-size: var(--text-base); }
-  .text-responsive-lg { font-size: var(--text-lg); }
-  .text-responsive-xl { font-size: var(--text-xl); }
-  .text-responsive-2xl { font-size: var(--text-2xl); }
-  .text-responsive-3xl { font-size: var(--text-3xl); }
-  .text-responsive-4xl { font-size: var(--text-4xl); }
+  .text-responsive-xs {
+    font-size: var(--text-xs);
+  }
+
+  .text-responsive-sm {
+    font-size: var(--text-sm);
+  }
+
+  .text-responsive-base {
+    font-size: var(--text-base);
+  }
+
+  .text-responsive-lg {
+    font-size: var(--text-lg);
+  }
+
+  .text-responsive-xl {
+    font-size: var(--text-xl);
+  }
+
+  .text-responsive-2xl {
+    font-size: var(--text-2xl);
+  }
+
+  .text-responsive-3xl {
+    font-size: var(--text-3xl);
+  }
+
+  .text-responsive-4xl {
+    font-size: var(--text-4xl);
+  }
 
   /* Standardized header utilities */
   .header-primary {
@@ -115,7 +157,8 @@ code {
     box-shadow: var(--header-shadow);
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     height: auto;
-    min-height: 4rem; /* Increased to accommodate larger elements */
+    min-height: 4rem;
+    /* Increased to accommodate larger elements */
   }
 
   /* Logo image styling - remove white background while preserving colors */
@@ -130,15 +173,11 @@ code {
     /* Remove white background while preserving original colors */
     background: transparent;
     /* Use CSS mask or filter to remove white pixels specifically */
-    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1))
-            contrast(1.1)
-            saturate(1.1);
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1)) contrast(1.1) saturate(1.1);
   }
 
   .header-logo-image:hover {
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15))
-            contrast(1.1)
-            saturate(1.1);
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15)) contrast(1.1) saturate(1.1);
     transform: translateY(-1px);
   }
 
@@ -165,9 +204,7 @@ code {
     margin-right: 0.75rem;
     flex-shrink: 0;
     transition: all 0.2s ease-in-out;
-    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1))
-            brightness(1.1)
-            contrast(1.2);
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1)) brightness(1.1) contrast(1.2);
     /* Remove white by making it transparent */
     background: transparent;
   }
@@ -198,7 +235,8 @@ code {
   .presentation-grid {
     display: flex;
     justify-content: center;
-    flex-wrap: nowrap; /* Prevent wrapping to ensure single row */
+    flex-wrap: nowrap;
+    /* Prevent wrapping to ensure single row */
     gap: var(--presentation-gap);
     width: 100%;
     align-items: flex-start;
@@ -311,11 +349,25 @@ code {
   }
 
   /* Aspect ratio utilities */
-  .aspect-square { aspect-ratio: var(--aspect-square); }
-  .aspect-video { aspect-ratio: var(--aspect-video); }
-  .aspect-photo { aspect-ratio: var(--aspect-photo); }
-  .aspect-presentation { aspect-ratio: var(--aspect-presentation); }
-  .aspect-wood-inspection { aspect-ratio: var(--aspect-wood-inspection); }
+  .aspect-square {
+    aspect-ratio: var(--aspect-square);
+  }
+
+  .aspect-video {
+    aspect-ratio: var(--aspect-video);
+  }
+
+  .aspect-photo {
+    aspect-ratio: var(--aspect-photo);
+  }
+
+  .aspect-presentation {
+    aspect-ratio: var(--aspect-presentation);
+  }
+
+  .aspect-wood-inspection {
+    aspect-ratio: var(--aspect-wood-inspection);
+  }
 
   /* Responsive flexbox utilities */
   .flex-responsive {
@@ -366,7 +418,7 @@ code {
     width: clamp(250px, 17vw, 290px);
     height: clamp(188px, 12.8vw, 218px);
   }
-  
+
   .inspection-presentation-grid {
     gap: clamp(0.5rem, 1.2vw, 1.2rem);
     max-width: calc(5 * (clamp(250px, 17vw, 290px) + clamp(0.5rem, 1.2vw, 1.2rem)) - clamp(0.5rem, 1.2vw, 1.2rem));
@@ -378,7 +430,7 @@ code {
     width: clamp(280px, 18vw, 320px);
     height: clamp(210px, 13.5vw, 240px);
   }
-  
+
   .inspection-presentation-grid {
     gap: clamp(0.6rem, 1.4vw, 1.4rem);
     max-width: calc(5 * (clamp(280px, 18vw, 320px) + clamp(0.6rem, 1.4vw, 1.4rem)) - clamp(0.6rem, 1.4vw, 1.4rem));
@@ -392,11 +444,11 @@ code {
     --presentation-image-height: clamp(128px, 12.8vw, 160px);
     --presentation-gap: clamp(0.3rem, 1vw, 0.8rem);
   }
-  
+
   .presentation-grid {
     padding: 0 var(--spacing-xs);
   }
-  
+
   .inspection-presentation-image {
     width: clamp(190px, 15.5vw, 230px);
     height: clamp(143px, 11.6vw, 173px);
@@ -410,11 +462,11 @@ code {
     --presentation-image-height: clamp(112px, 15.2vw, 144px);
     --presentation-gap: clamp(0.3rem, 1vw, 0.8rem);
   }
-  
+
   .container-responsive {
     padding: var(--spacing-xs);
   }
-  
+
   .inspection-presentation-image {
     width: clamp(150px, 16vw, 185px);
     height: clamp(113px, 12vw, 139px);
