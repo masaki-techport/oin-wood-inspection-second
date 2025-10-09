@@ -6,13 +6,5 @@
 	"service": "node-app",
 	"shutdownAction": "none",
 	"workspaceFolder": "/workspace",
-	"postCreateCommand": "/usr/local/bin/npm install",
-	"customizations": {
-		"vscode": {
-			"extensions": [
-				"eamodio.gitlens",
-				"GitHub.copilot"
-			]
-		}
-	}
+	"postCreateCommand": "/usr/local/bin/npm install"
 }

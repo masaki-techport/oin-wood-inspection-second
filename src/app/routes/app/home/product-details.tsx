@@ -95,7 +95,7 @@ const ProductDetails = () => {
               data.data.file_path ? (
                 <img
                   src={`${api.defaults.baseURL}/${data.data.file_path}`}
-                  alt="product-image"
+                  alt="product image"
                   className="w-full shadow-md p-6 rounded-lg bg-white"
                 />
               ) : (

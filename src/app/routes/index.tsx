@@ -2,12 +2,8 @@ import React from 'react';
 import { createBrowserRouter } from 'react-router-dom';
 import { QueryClient } from '@tanstack/react-query';
 import HomePage from './app/home';
-import CameraPage from './app/camera/CameraPage';
-import { InspectionScreen } from './app/inspection';
-import InferencePage from './app/inference';
-import SettingScreen from './app/inspection/setting';
-import InspectionHistoryScreen from './app/inspection/inspection-history';
-import CameraViewScreen from './app/camera-view';
+import ProductsPage from './app/products';
+import DatasetRegister from './app/dataset-register';
 
 export const createRouter = (queryClient: QueryClient) =>
   createBrowserRouter([
@@ -16,28 +12,12 @@ export const createRouter = (queryClient: QueryClient) =>
       element: <HomePage />,
     },
     {
-      path: '/camera',
-      element: <CameraPage />,
+      path: '/products',
+      element: <ProductsPage />,
     },
     {
-      path: '/inspection',
-      element: <InspectionScreen />,
-    },
-    {
-      path: '/inference',
-      element: <InferencePage />,
-    },
-    {
-      path: '/setting',
-      element: <SettingScreen />,
-    },
-    {
-      path: '/inspection-history',
-      element: <InspectionHistoryScreen />,
-    },
-    {
-      path: '/camera-view',
-      element: <CameraViewScreen />,
+      path: '/dataset-register',
+      element: <DatasetRegister />,
     },
     {
       path: '*',

@@ -38,7 +38,7 @@ export const createOrUpdateProduct = (create: boolean) => {
     formData.append('product_no', data.product_no);
     formData.append('product_name', data.product_name);
     if (data.product_file) {
-      formData.append('product_file', data.product_file);
+      formData.append('file', data.product_file);
     }
 
     return api_func('/products', formData, {

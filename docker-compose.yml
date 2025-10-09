@@ -6,16 +6,11 @@ services:
     tty: true
     volumes:
       - .:/workspace:cached
-      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    # command: sleep infinity
+    # links:
+    #   - node-app
     environment:
       TZ: "Asia/Tokyo"
-      DISPLAY: "${DISPLAY}"
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
-    privileged: true
-    network_mode: "host"
-    ports:
-      - "8000:8000"
 
   node-app:
     image: mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm
@@ -25,3 +20,20 @@ services:
     # command: sleep infinity
     environment:
       TZ: "Asia/Tokyo"
+
+  db:
+    image: mysql:8.4.0
+    # command: mysqld --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    restart: unless-stopped
+    volumes:
+      # - ./db-data:/var/lib/mysql
+      - ./src-api/scripts/db:/docker-entrypoint-initdb.d
+    ports:
+      - 3306:3306
+    environment:
+      TZ: "Asia/Tokyo"
+      # BIND-ADDRESS: 0.0.0.0
+      MYSQL_ROOT_PASSWORD: mysql
+      MYSQL_DATABASE: testDB
+      MYSQL_USER: testUser
+      MYSQL_PASSWORD: testP@ssw0rd

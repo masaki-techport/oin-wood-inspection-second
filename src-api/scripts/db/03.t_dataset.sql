@@ -1,0 +1,17 @@
+SET CHARACTER_SET_CLIENT = utf8mb4;
+SET CHARACTER_SET_CONNECTION = utf8mb4;
+
+DROP TABLE if exists t_dataset;
+CREATE TABLE t_dataset (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT 'ID',
+  `product_no` VARCHAR(10) NOT NULL COMMENT '品番',
+  `file_path` VARCHAR(4096) NOT NULL COMMENT 'ファイルパス',
+  `label` int not null COMMENT 'クラスラベル\n0:OK\n1:NG\n-1:未指定',
+  `create_dt` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '作成日時',
+  `update_dt` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新日時',
+  PRIMARY KEY (`id`),
+  FOREIGN KEY FK_product_id (product_no) 
+    REFERENCES t_product (product_no)
+    ON UPDATE CASCADE
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='データセットマスタ';

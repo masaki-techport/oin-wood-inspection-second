@@ -1,10 +1,5 @@
-.venv
 db-data
 src-api/data/images
-src-api/data/sqlite.db
-Release
-build
-
 
 # Logs
 logs
@@ -136,7 +131,3 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
-src-api/data/sqlite.db-shm
-src-api/data/sqlite.db-wal
-src-api/source/data/images/inspection/
-src-api/data/

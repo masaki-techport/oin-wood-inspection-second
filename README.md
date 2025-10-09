@@ -1,89 +1,46 @@
-# 環境構築
+# Getting Started with Create React App
 
-## 1. Chromeのインストール
-Chromeをインストールして、デフォルトブラウザに設定してください。
+This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
-## 2. PC、DIOデバイス、Baslerカメラを同一ネットワークに接続する
+## Available Scripts
 
-### 手順1: PCのイーサネットのIPとサブネットを固定する
+In the project directory, you can run:
 
-### 手順2: PCと同一のネットワーク帯で、ContecDeviceUtilityでDIOデバイスのIP、サブネットを固定する
-ContecDevice下記のURLからインストール  
-https://app.box.com/folder/333484023644  
+### `npm start`
 
-https://help.contec.com/pc-helper/api-tool-wdm/jp/APITOOL.htm?_gl=1*a3yb06*_ga*NjAxMDc1NjYzLjE3MzE1NTE3NTA.*_ga_K598M9BNYF*czE3NTEyNDA3MTQkbzEzOSRnMSR0MTc1MTI0MDg1NiRqNTckbDAkaDA.*_ga_BS4FMZBM5E*czE3NTEyNDA3MTQkbzEwOSRnMSR0MTc1MTI0MDg1NiRqNTckbDAkaDA.#t=start%2Findex.htm
+Runs the app in the development mode.\
+Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
 
-### 手順3: PCと同一のネットワーク帯で、PylonViewerでBaslerカメラのIP、サブネットを固定する
-下記からpylonをインストールするとPylonViwerもインストールされる  
-https://www.baslerweb.com/ja-jp/downloads/software/
+The page will reload if you make edits.\
+You will also see any lint errors in the console.
 
----
-**注意:** 設定するIPアドレスが他の機器と重複しないようにしてください。
+### `npm test`
 
-## 3. サポートされている最新の Visual C++ 再頒布可能パッケージのダウンロード
-下記URLからインストール  
-https://learn.microsoft.com/ja-jp/cpp/windows/latest-supported-vc-redist?view=msvc-170
-  
+Launches the test runner in the interactive watch mode.\
+See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
 
-## 4. リリース成果物自動生成・Python組み込み環境セットアップ
+### `npm run build`
 
-### 1. make_release.ps1 (リリース成果物自動生成)
+Builds the app for production to the `build` folder.\
+It correctly bundles React in production mode and optimizes the build for the best performance.
 
-- **用途**:
-  - Reactフロントエンドのビルド・FastAPIバックエンドのRelease用成果物を自動生成します。
-- **主な流れ**:
-  1. 既存Releaseフォルダの削除確認
-  2. setup_python.ps1の実行確認
-  3. buildフォルダの再ビルド有無を確認し、run_build.ps1でReactビルド
-  4. build, src-apiをReleaseにコピー（不要ファイル除外）
-  5. 完了メッセージ
-- **実行方法**:
-  - PowerShellで右クリック「PowerShellで実行」またはターミナルで
+The build is minified and the filenames include the hashes.\
+Your app is ready to be deployed!
 
-  ```powershell
-  ./make_release.ps1
-  ```
+See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
 
-- **備考**:
-  - 内部で `setup_python.ps1` および `run_build.ps1` を実行します。 (詳細は下記参照)
+### `npm run eject`
 
-### 2. setup_python.ps1（Release用 組み込みPythonセットアップ）
+**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
 
-- **用途**:
-  - Releaseフォルダ内にWindows組み込み版Pythonを自動セットアップします。
-- **主な流れ**:
-  1. 既存のRelease/python*** フォルダ削除確認
-  2. Python公式サイトからバージョン選択・ダウンロード
-  3. 組み込み版zipを展開・site有効化・パス追加
-  4. pipインストール・requirements.txtから依存モジュール自動インストール
-  5. Release/run.bat自動生成
-- **実行方法**:
-  - `make_release.ps1` から自動で呼び出されます
-  - 単体実行する場合は、PowerShellで右クリック「PowerShellで実行」またはターミナルで
+If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
 
-  ```powershell
-  ./setup_python.ps1
-  ```
+Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
 
-### 3. run_build.ps1（Reactビルド専用スクリプト）
+You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
 
-- **用途**:
-  - Docker Container内でReactのnpm install & buildを一括実行します。
-- **主な流れ**:
-  1. node_modules削除確認
-  2. Docker Desktop/WSL2自動判定・WSLディストリ選択
-  3. docker compose runでnpm install & npm run build
-- **実行方法**:
-  - `make_release.ps1` から自動で呼び出されます
-  - 単体実行する場合は、PowerShellで右クリック「PowerShellで実行」またはターミナルで
+## Learn More
 
-  ```powershell
-  ./run_build.ps1
-  ```
+You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
 
----
-
-#### 注意
-
-- すべてのスクリプトはPowerShell専用です。
-- リリース成果物は `Release/` フォルダに生成され、 `run.bat` から実行可能です。
+To learn React, check out the [React documentation](https://reactjs.org/).

@@ -22,7 +22,7 @@ export type Inspection = Entity<{
   product_no: string;
   serial: string;
   inspection_dt: Date;
-  inspection_result: number;
+  inspection_result: boolean;
   file_path: string;
 }>;
 
@@ -39,69 +39,3 @@ export type ApiResult<T = never> = {
   page_no?: number;
   page_size?: number;
 } & (T extends never ? {} : { data: T });
-
-export type InferenceResult = {
-  total_detections: number;
-  knot_counts: {
-    [key: string]: number;
-  };
-  detections: Array<{
-    class_id: number;
-    class_name: string;
-    confidence: number;
-    bbox: number[];
-  }>;
-  result_image: string;
-  config: {
-    resolution: number;
-    thresh: number;
-  };
-  debug?: {
-    model_class_mapping: { [key: number]: string };
-    app_class_mapping: { [key: number]: string };
-    mapping_note: string;
-  };
-};
-
-export type InspectionResult = {
-  inspection_id: number;
-  discoloration: boolean;
-  hole: boolean;
-  knot: boolean;
-  dead_knot: boolean;
-  live_knot: boolean;
-  tight_knot: boolean;
-  length: number;
-  create_dt?: string;
-  update_dt?: string;
-};
-
-export type InspectionDetailsImg = {
-  error_id: number;         // 主キー
-  inspection_id: number;    // 外部キー
-  error_type: number;       // 
-  error_type_name: string;
-  x_position: number;       // x1 (left-top X)
-  y_position: number;       // y1 (left-top Y)
-  x2_position: number;     // x2 (right-bottom X)
-  y2_position: number;     // y2 (right-bottom Y)
-  width: number;            // Calculated: x2 - x1
-  height: number;           // Calculated: y2 - y1
-  length?: number;          // Max of width and height in mm
-  confidence: number;
-  image_no?: number;        // 画像番号
-  image_path?: string;      // 画像パス
-  create_dt?: string;
-  update_dt?: string;
-};
-
-// Bulk operations types
-export type BulkDeleteRequest = {
-  inspection_ids: number[];
-};
-
-export type BulkDeleteResponse = {
-  deleted_count: number;
-  failed_ids: number[];
-  deleted_folders: string[];
-};

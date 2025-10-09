@@ -1,10 +1,12 @@
+import React from 'react';
+
 import { DefaultLayout } from '@/components/layouts';
-import HomeButton from './home-button';
+import ProductDetails from './product-details';
 
 const HomePage = () => {
   return (
     <DefaultLayout title="ホーム画面">
-      <HomeButton />
+      <ProductDetails />
     </DefaultLayout>
   );
 };

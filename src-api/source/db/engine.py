@@ -1,15 +1,43 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from app_config import DB
-from db.base import Base
+import sys
+import os
 
-engine = create_engine(
-    DB["driver"],
-    connect_args={"check_same_thread": False},
-    echo=DB.get("echo", False)
+import sqlalchemy
+
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+import app_config
+
+config = app_config.DB
+
+sys.path.append(os.path.join(os.path.dirname(__file__)))
+from base import Base
+
+# create connection url
+connection_url = sqlalchemy.engine.URL.create(
+    drivername=config["driver"],
+    username=config["user"],
+    password=config["password"],
+    host=config["host"],
+    database=config["database"],
 )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# create database engine
+engine = sqlalchemy.create_engine(
+    connection_url,
+    echo=config["echo"],
+    pool_size=20,
+    max_overflow=0,
+)
 
-def initialize_database():
-    Base.metadata.create_all(engine)
+# create tables
+Base.metadata.create_all(engine)
+
+# create session
+SessionLocal = sqlalchemy.orm.sessionmaker(
+    autocommit=False, autoflush=False, bind=engine
+)
+
+
+if __name__ == "__main__":
+    print("connection_url", connection_url)
+    print("engine", engine)
+    print("SessionLocal", SessionLocal)
