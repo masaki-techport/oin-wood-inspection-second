@@ -1,4 +1,3 @@
-mysql-connector-python
-sqlalchemy
-fastapi[all]
-pytz
+sqlalchemy==2.0.43
+fastapi[all]==0.118.2
+pytz==2025.2

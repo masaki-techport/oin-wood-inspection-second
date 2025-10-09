@@ -5,13 +5,19 @@ from inspections_watcher_task import inspections_watcher_task
 from starlette.staticfiles import StaticFiles
 import os
 from app_config import APP_CONFIG
+from services.my_logger import setup_logger
 
-if not os.path.exists(APP_CONFIG['upload_folder_dataset']):
-    os.makedirs(APP_CONFIG['upload_folder_dataset'])
-if not os.path.exists(APP_CONFIG['upload_folder_product']):
-    os.makedirs(APP_CONFIG['upload_folder_product'])
-if not os.path.exists(APP_CONFIG['upload_folder_inspection']):
-    os.makedirs(APP_CONFIG['upload_folder_inspection'])
+logger = setup_logger()
+
+for folder in [APP_CONFIG["folder_inspection"]]:
+    try:
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+            logger.info(f"フォルダを作成しました: {folder}")
+        else:
+            logger.debug(f"フォルダは既に存在します: {folder}")
+    except Exception as e:
+        logger.exception(f"フォルダ作成/確認時のエラー: {folder}: {e}")
 
 # create FastAPI Instance
 app = FastAPI()
