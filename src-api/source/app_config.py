@@ -7,4 +7,4 @@ APP_CONFIG = {
     "log_backup_count": 7,
 }
 
-DB = {"driver": "sqlite:///data/sqlite.db", "echo": False}
+DB = {"driver": "sqlite:///data/wood_inspection_sqlite.db", "echo": False}
