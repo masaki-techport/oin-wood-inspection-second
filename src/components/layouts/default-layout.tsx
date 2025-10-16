@@ -14,7 +14,7 @@ export const DefaultLayout = ({ title, children }: Props) => {
     <>
       <Helmet helmetData={helmetData} title={title} defaultTitle={title} />
       <div className="w-screen h-screen flex flex-col">
-        <Header />
+        <Header text={title} />
         <div className="flex-1 overflow-y-auto p-4">{children}</div>
       </div>
     </>

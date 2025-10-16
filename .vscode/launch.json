@@ -13,5 +13,12 @@
                 "webpack:///./*": "${webRoot}/src/*"
             }
         },
+        {
+            "name": "Python: src-api/source/main.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src-api/source/main.py",
+            "cwd": "${workspaceFolder}/src-api"
+        }
     ]
 }
